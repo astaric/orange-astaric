@@ -78,7 +78,7 @@ def em(X, k, nsteps=30, window_size=1):
             inv_covars = 1. / covars[j]
             xn = X - means[j]
             factor = (2.0 * np.pi) ** (xn.shape[1] / 2.0) * det ** 0.5
-            w[j] = priors[j] * exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
-        w[active] /= w[active].sum(axis=0)
+            w[j] = 1/k * exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
+    w[active] /= w[active].sum(axis=0)
 
     return w, means, covars, priors
