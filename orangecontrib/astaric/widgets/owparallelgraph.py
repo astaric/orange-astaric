@@ -33,7 +33,7 @@ class OWParallelGraph(orangeOWParallelGraph):
             indices = [self.attribute_name_index[label] for label in self.visualizedAttributes]
             X = self.original_data[indices].T
             w, mu, sigma, phi = em(X, self.number_of_groups, self.number_of_steps)
-            self.groups[key] = phi, mu, sigma
+            #self.groups[key] = phi, mu, sigma
         return self.groups[key]
 
     def draw_groups(self):
