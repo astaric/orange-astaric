@@ -1,4 +1,5 @@
 from collections import namedtuple
+from Orange.evaluation.scoring import compute_CD
 
 import os
 import numpy as np
@@ -93,9 +94,9 @@ def score(result, x):
 print r"\begin{tabular}{ l r r r }"
 print r"dataset & S(k-means) & S(gmm)& S(lac) \\"
 print r"\hline"
-# for ds in [Table('iris')]:
-# for ds in GDS_datasets():
 results = []
+#for ds in [Table('iris'), Table('iris')]:
+# for ds in GDS_datasets():
 for ds in continuous_uci_datasets():
     x, = ds.to_numpy("a")
     x_ma, = ds.to_numpy_MA("a")
@@ -114,23 +115,27 @@ for ds in continuous_uci_datasets():
     results.append((km_score, gmm_score, lac_score))
     print r"%s & %.2f & %.2f & %.2f \\" % (ds.name.replace("_", "\_"), km_score, gmm_score, lac_score)
 print r"\end{tabular}"
-
-import pylab as plt
 results = np.array(results)
-km = results[1:, 0]
-gmm = results[1:, 1]
-lac = results[1:, 2]
-
-plt.plot(gmm, lac, 'x')
-plt.plot([0, 80], [0, 80])
-plt.xlabel("gmm")
-plt.ylabel("lac")
-plt.show()
-
-#ranks = np.array([[1, 2] if s[0] < s[1] else [2, 1] for s in results])
-#print ranks[0]
-#from Orange.evaluation.scoring import graph_ranks
-#graph_ranks('ranks.png', ranks, ["kmeans", 'lac'])
 
 
+def comparison_plot():
+    import pylab as plt
 
+    km = results[1:, 0]
+    gmm = results[1:, 1]
+    lac = results[1:, 2]
+
+    plt.plot(gmm, lac, 'x')
+    plt.plot([0, 80], [0, 80])
+    plt.xlabel("gmm")
+    plt.ylabel("lac")
+    plt.show()
+
+
+def rank_plot():
+    from Orange.evaluation.scoring import graph_ranks
+    avgranks = np.mean(np.argsort(np.argsort(results)) + 1, axis=0)
+    cd = compute_CD(avgranks, len(results))
+    graph_ranks('ranks.pdf', avgranks, ["kmeans", 'gmm', 'lac'], cd=cd)
+
+rank_plot()
