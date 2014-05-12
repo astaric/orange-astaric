@@ -19,6 +19,8 @@ from orangecontrib.astaric.gmm import em
 def continuous_uci_datasets():
     datasets_dir = os.path.join(os.path.dirname(Orange.__file__), 'datasets')
     for ds in [file for file in os.listdir(datasets_dir) if file.endswith('tab')]:
+        if ds in ["adult.tab"]:
+            continue
         if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab"]:
             continue
         table = Table(ds)
@@ -88,6 +90,40 @@ def GMM(X, k):
     return Result(means, covars, k)
 
 
+def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lambda ax: None):
+    import pylab as plt
+    from matplotlib.patches import Polygon
+    colors = "#a6cee3,#1f78b4,#b2df8a,#33a02c,#fb9a99,#e31a1c,#fdbf6f,#ff7f00,#cab2d6,#6a3d9a".split(",")
+
+    fig, ax = plt.subplots()
+    for y in X:
+        x = np.array(range(len(y)))
+        ax.plot(x, y, color='k', alpha=.1)
+
+    for i in range(X.shape[1]):
+        ax.plot([i, i], [0, 1], color='k', lw=1.)
+
+    if means is not None and stdevs is not None:
+        for i, (mean, stdev) in enumerate(zip(means, stdevs)):
+            y = [mean[j] + stdev[j] for j in range(len(mean))]
+            y += [mean[j] - stdev[j] for j in range(len(mean))][::-1]
+            x = range(len(mean)) + range(len(mean))[::-1]
+
+            poly = Polygon(zip(x, y), facecolor=colors[i], edgecolor='none', alpha=.5)
+            plt.gca().add_patch(poly)
+
+            y = [mean[j] + stdev[j] / 2 for j in range(len(mean))]
+            y += [mean[j] - stdev[j] / 2 for j in range(len(mean))][::-1]
+            x = range(len(mean)) + range(len(mean))[::-1]
+
+            poly = Polygon(zip(x, y), facecolor=colors[i], edgecolor='none', alpha=.8)
+            plt.gca().add_patch(poly)
+
+    ax.set_xlim([-.01, X.shape[1] - 0.93])
+    annotate(ax)
+    ax.axis('off')
+    plt.savefig(filename, bbox_inches='tight')
+
 
 def score(result, x):
     means = x.mean(axis=0)
@@ -121,6 +157,13 @@ for ds in continuous_uci_datasets():
     print lac.k
     km = KM(x, lac.k)
     gmm = GMM(x, lac.k)
+
+    parallel_coordinates_plot(ds.name + ".kmeans.png", x,
+                              means=km.means, stdevs=np.sqrt(km.covars))
+    parallel_coordinates_plot(ds.name + ".lac.png", x,
+                              means=lac.means, stdevs=np.sqrt(lac.covars))
+    parallel_coordinates_plot(ds.name + ".gmm.png", x,
+                              means=gmm.means, stdevs=np.sqrt(gmm.covars))
 
     km_score, gmm_score, lac_score = map(lambda r: score(r, x), [km, gmm, lac])
     results.append((km_score, gmm_score, lac_score))
