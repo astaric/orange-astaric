@@ -40,7 +40,7 @@ def GDS_datasets():
             yield new_table
 
 
-Result = namedtuple('LAC', ['means', 'covars'])
+Result = namedtuple('LAC', ['means', 'covars', 'k'])
 
 
 def KM(X, k):
@@ -52,7 +52,7 @@ def KM(X, k):
     for j in range(k):
         xn = X[Y == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / len(xn)
-    return Result(means, covars)
+    return Result(means, covars, k)
 
 
 def LAC(X, k):
@@ -62,10 +62,14 @@ def LAC(X, k):
     distances = np.zeros(shape=(0,), dtype=np.float64)
     _k_means._assign_labels_array(X, squared_norms, means, labels, distances=distances)
     covars = np.zeros((k, X.shape[1]))
+
+    realk = 0
     for j in range(k):
         xn = X[labels == j, :] - means[j]
+        if len(xn):
+            realk += 1
         covars[j] = np.sum(xn ** 2, axis=0) / (len(xn) if len(xn) else 1.)
-    return Result(means, covars)
+    return Result(means, covars, realk)
 
 
 def GMM(X, k):
@@ -77,10 +81,11 @@ def GMM(X, k):
     distances = np.zeros(shape=(0,), dtype=np.float64)
     _k_means._assign_labels_array(X, squared_norms, means, labels, distances=distances)
     covars = np.zeros((k, X.shape[1]))
+
     for j in range(k):
         xn = X[labels == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / (len(xn) if len(xn) else 1.)
-    return Result(means, covars)
+    return Result(means, covars, k)
 
 
 
@@ -105,12 +110,18 @@ for ds in continuous_uci_datasets():
     inds = np.where(x_ma.mask)
     x[inds] = np.take(col_mean, inds[1])
 
+    xn = x - means
+    stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
+    x /= stdev
+
     k = 10
     n_steps = 99
 
-    km = KM(x, k)
     lac = LAC(x, k)
-    gmm = GMM(x, k)
+    print lac.k
+    km = KM(x, lac.k)
+    gmm = GMM(x, lac.k)
+
     km_score, gmm_score, lac_score = map(lambda r: score(r, x), [km, gmm, lac])
     results.append((km_score, gmm_score, lac_score))
     print r"%s & %.2f & %.2f & %.2f \\" % (ds.name.replace("_", "\_"), km_score, gmm_score, lac_score)
