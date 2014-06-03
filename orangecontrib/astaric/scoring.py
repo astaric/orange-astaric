@@ -1,5 +1,6 @@
 from collections import namedtuple
 from Orange.evaluation.scoring import compute_CD
+from math import sqrt
 
 import os
 import numpy as np
@@ -19,8 +20,8 @@ from orangecontrib.astaric.gmm import em
 def continuous_uci_datasets():
     datasets_dir = os.path.join(os.path.dirname(Orange.__file__), 'datasets')
     for ds in [file for file in os.listdir(datasets_dir) if file.endswith('tab')]:
-        if ds in ["adult.tab"]:
-            continue
+        #if ds in ["adult.tab"]:
+        #    continue
         if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab"]:
             continue
         table = Table(ds)
@@ -32,7 +33,7 @@ def continuous_uci_datasets():
 
 
 def GDS_datasets():
-    datasets_dir = '/Users/anze/Downloads'
+    datasets_dir = '/Users/anze/dev/orange-astaric/orangecontrib/astaric/GDS'
     for ds in [file for file in os.listdir(datasets_dir) if file.startswith('GDS') and file.endswith('tab')]:
         table = Table(os.path.join(datasets_dir, ds))
         continuous_features = [a for a in table.domain.features if isinstance(a, Continuous)]
@@ -42,7 +43,18 @@ def GDS_datasets():
             yield new_table
 
 
-Result = namedtuple('LAC', ['means', 'covars', 'k'])
+def temporal_datasets():
+    datasets_dir = '/Users/anze/dev/orange-astaric/orangecontrib/astaric/temporal'
+    for ds in [file for file in os.listdir(datasets_dir) if file.endswith('tab')]:
+        table = Table(os.path.join(datasets_dir, ds))
+        continuous_features = [a for a in table.domain.features if isinstance(a, Continuous)]
+        if len(continuous_features) > 5:
+            new_table = Table(Domain(continuous_features), ImputeTable(table))
+            new_table.name = ds
+            yield new_table
+
+
+Result = namedtuple('LAC', ['means', 'covars', 'k', 'minis'])
 
 
 def KM(X, k):
@@ -54,7 +66,7 @@ def KM(X, k):
     for j in range(k):
         xn = X[Y == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / len(xn)
-    return Result(means, covars, k)
+    return Result(means, covars, k, [])
 
 
 def LAC(X, k):
@@ -66,12 +78,15 @@ def LAC(X, k):
     covars = np.zeros((k, X.shape[1]))
 
     realk = 0
+    realmeans = []
+    realcovars = []
     for j in range(k):
         xn = X[labels == j, :] - means[j]
         if len(xn):
             realk += 1
-        covars[j] = np.sum(xn ** 2, axis=0) / (len(xn) if len(xn) else 1.)
-    return Result(means, covars, realk)
+            realmeans.append(means[j])
+            realcovars.append(np.sum(xn ** 2, axis=0) / len(xn))
+    return Result(np.array(realmeans), np.array(realcovars), realk, [])
 
 
 def GMM(X, k):
@@ -87,7 +102,7 @@ def GMM(X, k):
     for j in range(k):
         xn = X[labels == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / (len(xn) if len(xn) else 1.)
-    return Result(means, covars, k)
+    return Result(means, covars, k, [])
 
 
 def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lambda ax: None):
@@ -98,7 +113,7 @@ def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lam
     fig, ax = plt.subplots()
     for y in X:
         x = np.array(range(len(y)))
-        ax.plot(x, y, color='k', alpha=.1)
+        ax.plot(x, y, color='k', alpha=.01)
 
     for i in range(X.shape[1]):
         ax.plot([i, i], [0, 1], color='k', lw=1.)
@@ -132,44 +147,135 @@ def score(result, x):
 
     return np.sqrt(result.covars / stdev).sum() / xn.shape[1]
 
-print r"\begin{tabular}{ l r r r }"
-print r"dataset & S(k-means) & S(gmm)& S(lac) \\"
-print r"\hline"
-results = []
-#for ds in [Table('iris'), Table('iris')]:
-# for ds in GDS_datasets():
-for ds in continuous_uci_datasets():
-    x, = ds.to_numpy("a")
-    x_ma, = ds.to_numpy_MA("a")
-    means = x_ma.mean(axis=0)
-    col_mean = stats.nanmean(x, axis=0)
-    inds = np.where(x_ma.mask)
-    x[inds] = np.take(col_mean, inds[1])
 
-    xn = x - means
-    stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
-    x /= stdev
+def global_probability_score(result, x):
+    score = 0.
 
-    k = 10
-    n_steps = 99
+    dims = range(x.shape[1])
+    w = np.empty((result.k, len(x)))
+    for j in range(result.k):
+        det = result.covars[j, dims].prod()
+        inv_covars = 1. / result.covars[j, dims]
+        xn = x[:, dims] - result.means[j, dims]
+        factor = (2.0 * np.pi) ** (len(dims) / 2.0) * det ** 0.5
+        w[j] = np.exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
+    w /= w.sum(axis=0)
+    w = np.nan_to_num(w)
 
-    lac = LAC(x, k)
-    print lac.k
-    km = KM(x, lac.k)
-    gmm = GMM(x, lac.k)
+    for i in range(result.k):
+        for j in range(result.k):
+            if i == j:
+                continue
+            score += (w[j, :] * w[i, :]).sum() / len(x)
+    return score
 
-    parallel_coordinates_plot(ds.name + ".kmeans.png", x,
-                              means=km.means, stdevs=np.sqrt(km.covars))
-    parallel_coordinates_plot(ds.name + ".lac.png", x,
-                              means=lac.means, stdevs=np.sqrt(lac.covars))
-    parallel_coordinates_plot(ds.name + ".gmm.png", x,
-                              means=gmm.means, stdevs=np.sqrt(gmm.covars))
+def probability_score(result, x):
+    score = 0.
+    for dims in zip(range(x.shape[1]), range(1, x.shape[1])):
+        w = np.empty((result.k, len(x)))
+        for j in range(result.k):
+            det = result.covars[j, dims].prod()
+            inv_covars = 1. / result.covars[j, dims]
+            xn = x[:, dims] - result.means[j, dims]
+            factor = (2.0 * np.pi) ** (len(dims) / 2.0) * det ** 0.5
+            w[j] = np.exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
+        w /= w.sum(axis=0)
+        w = np.nan_to_num(w)
 
-    km_score, gmm_score, lac_score = map(lambda r: score(r, x), [km, gmm, lac])
-    results.append((km_score, gmm_score, lac_score))
-    print r"%s & %.2f & %.2f & %.2f \\" % (ds.name.replace("_", "\_"), km_score, gmm_score, lac_score)
-print r"\end{tabular}"
-results = np.array(results)
+        for i in range(result.k):
+            for j in range(result.k):
+                if i == j:
+                    continue
+                score += (w[j, :] * w[i, :]).sum() / len(x)
+    return score
+
+
+def best_triplet_variance_score(result, x):
+    score = 0.
+    for j in range(result.k):
+        minvar = None
+        mini = None
+        for i in range(1, x.shape[1] - 1):
+            var = np.sum(result.covars[j, i-1:i+2])
+            if minvar is None or var < minvar:
+                minvar = var
+                mini = i
+        score += minvar
+        result.minis.append(mini)
+    score /= result.k
+    return score
+
+
+def test(print_results=True):
+    global results
+    if print_results:
+        print r"\begin{tabular}{ l r r r }"
+        print r"dataset & S(k-means) & S(gmm)& S(lac) \\"
+        print r"\hline"
+    results = []
+    #for ds in [Table('vehicle', name='vehicle')]:
+    #for ds in GDS_datasets():
+    for ds in continuous_uci_datasets():
+    #for ds in temporal_datasets():
+        x, = ds.to_numpy("a")
+        x_ma, = ds.to_numpy_MA("a")
+        means = x_ma.mean(axis=0)
+        col_mean = stats.nanmean(x, axis=0)
+        inds = np.where(x_ma.mask)
+        x[inds] = np.take(col_mean, inds[1])
+
+        m, M = x.min(axis=0), x.max(axis=0)
+        x = (x - m) / (M - m)
+
+        np.random.shuffle(x.T)
+
+        # xn = x - means
+        #stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
+        #x /= stdev
+
+        k = 10
+        n_steps = 99
+
+        lac = LAC(x, k)
+        km = KM(x, lac.k)
+        gmm = GMM(x, lac.k)
+
+        km_score, gmm_score, lac_score = map(lambda r: probability_score(r, x), [km, gmm, lac])
+        if lac.k > 1:
+            results.append((km_score, gmm_score, lac_score))
+        if not print_results:
+            continue
+        print "%s & " % ds.name.replace("_", "\_"),
+        if km_score == min(km_score, gmm_score, lac_score):
+            print r"{\bf %.6f} &" % km_score,
+        else:
+            print "%.6f &" % km_score,
+        if gmm_score == min(km_score, gmm_score, lac_score):
+            print r"{\bf %.6f} &" % gmm_score,
+        else:
+            print "%.6f &" % gmm_score,
+        if lac_score == min(km_score, gmm_score, lac_score):
+            print r"{\bf %.6f} \\ %% %d" % (lac_score, lac.k)
+        else:
+            print r"%.6f \\ %% %d" % (lac_score, lac.k)
+
+        def annotate(minis):
+            def _annotate(ax):
+                for m in minis:
+                    ax.plot([m-1, m, m+1], [.5, .5, .5])
+            return _annotate
+
+        continue
+        parallel_coordinates_plot(ds.name + ".kmeans.png", x,
+                                  means=km.means, stdevs=np.sqrt(km.covars), annotate=annotate(km.minis))
+        parallel_coordinates_plot(ds.name + ".lac.png", x,
+                                  means=lac.means, stdevs=np.sqrt(lac.covars), annotate=annotate(lac.minis))
+        parallel_coordinates_plot(ds.name + ".gmm.png", x,
+                                  means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
+
+    if print_results:
+        sprint r"\end{tabular}"
+    results = np.array(results)
 
 
 def comparison_plot():
@@ -190,6 +296,9 @@ def rank_plot():
     from Orange.evaluation.scoring import graph_ranks
     avgranks = np.mean(np.argsort(np.argsort(results)) + 1, axis=0)
     cd = compute_CD(avgranks, len(results))
+    print avgranks, cd
     graph_ranks('ranks.pdf', avgranks, ["kmeans", 'gmm', 'lac'], cd=cd)
 
-rank_plot()
+for i in range(50):
+    test(False)
+    rank_plot()
