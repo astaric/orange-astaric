@@ -46,7 +46,7 @@ def em(X, k, nsteps=30, window_size=1):
                     det = covars[j, dims].prod()
                     inv_covars = 1. / covars[j, dims]
                     xn = x - means[j, dims]
-                    factor = (2.0 * np.pi) ** (x.shape[1] / 2.0) * det ** 0.5
+                    factor = (2.0 * np.pi) ** (x.shape[1]/ 2.0) * det ** 0.5
                     w[j] = priors[j] * exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
                 else:
                     w[j] = 0

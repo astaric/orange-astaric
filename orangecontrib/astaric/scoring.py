@@ -1,6 +1,7 @@
 from collections import namedtuple
 from Orange.evaluation.scoring import compute_CD
 from math import sqrt
+from itertools import chain
 
 import os
 import numpy as np
@@ -16,12 +17,17 @@ from sklearn.cluster.k_means_ import _squared_norms
 
 from orangecontrib.astaric.gmm import em
 
+np.random.seed(42)
+
+
+def iris():
+    yield Table("iris")
 
 def continuous_uci_datasets():
     datasets_dir = os.path.join(os.path.dirname(Orange.__file__), 'datasets')
     for ds in [file for file in os.listdir(datasets_dir) if file.endswith('tab')]:
-        #if ds in ["adult.tab"]:
-        #    continue
+        if ds in ["adult.tab"]:
+            continue
         if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab"]:
             continue
         table = Table(ds)
@@ -54,7 +60,7 @@ def temporal_datasets():
             yield new_table
 
 
-Result = namedtuple('LAC', ['means', 'covars', 'k', 'minis'])
+Result = namedtuple('results', ['means', 'covars', 'k', 'minis'])
 
 
 def KM(X, k):
@@ -140,7 +146,7 @@ def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lam
     plt.savefig(filename, bbox_inches='tight')
 
 
-def score(result, x):
+def covariance_score(result, x):
     means = x.mean(axis=0)
     xn = x - means
     stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
@@ -169,25 +175,31 @@ def global_probability_score(result, x):
             score += (w[j, :] * w[i, :]).sum() / len(x)
     return score
 
-def probability_score(result, x):
-    score = 0.
-    for dims in zip(range(x.shape[1]), range(1, x.shape[1])):
-        w = np.empty((result.k, len(x)))
-        for j in range(result.k):
-            det = result.covars[j, dims].prod()
-            inv_covars = 1. / result.covars[j, dims]
-            xn = x[:, dims] - result.means[j, dims]
-            factor = (2.0 * np.pi) ** (len(dims) / 2.0) * det ** 0.5
-            w[j] = np.exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
-        w /= w.sum(axis=0)
-        w = np.nan_to_num(w)
 
-        for i in range(result.k):
-            for j in range(result.k):
-                if i == j:
-                    continue
-                score += (w[j, :] * w[i, :]).sum() / len(x)
-    return score
+def score_dimension_pair(x, result, dims):
+    w = np.empty((result.k, len(x)))
+    for j in range(result.k):
+        det = result.covars[j, dims].prod()
+        inv_covars = 1. / result.covars[j, dims]
+        xn = x[:, dims] - result.means[j, dims]
+        factor = (2.0 * np.pi) ** (len(dims) / 2.0) * det ** 0.5
+        w[j] = np.exp(-.5 * np.sum(xn * inv_covars * xn, axis=1)) / factor
+    w = np.nan_to_num(w)
+    w /= w.sum(axis=0)
+    w = np.nan_to_num(w)
+
+    return sum(
+        (w[j, :] * w[i, :]).sum() / len(x)
+        for i in range(result.k)
+        for j in range(result.k)
+        if i != j
+    )
+
+
+def probability_score(result, x):
+    return sum(
+        score_dimension_pair(x, result, dims)
+        for dims in zip(range(x.shape[1]), range(1, x.shape[1])))
 
 
 def best_triplet_variance_score(result, x):
@@ -206,16 +218,74 @@ def best_triplet_variance_score(result, x):
     return score
 
 
-def test(print_results=True):
+def best_triplet_probability_score(result, x):
+    return min(
+        score_dimension_pair(x, result, dims)
+        for dims in zip(range(x.shape[1]), range(1, x.shape[1]), range(2, x.shape[1])))
+
+
+def reorder_features_by_similarity(sim_matrix):
+    order = []
+    for i in range(sim_matrix.shape[0]):
+        sim_matrix[i, i] = float('-inf')
+    maxvaridx = sim_matrix.argmax()
+
+    def use(i):
+        sim_matrix[i, :] = float('-inf')
+        sim_matrix[:, i] = float('-inf')
+
+    order.append(maxvaridx % len(sim_matrix))
+    while len(order) < len(sim_matrix):
+        a = order[-1]
+        b = order[0]
+        amaxidx = sim_matrix[a, :].argmax()
+        amax = sim_matrix[a, amaxidx]
+        bmaxidx = sim_matrix[b, :].argmax()
+        bmax = sim_matrix[b, bmaxidx]
+
+        if amax > bmax:
+            order.append(amaxidx)
+            use(a)
+        else:
+            order.insert(0, bmaxidx)
+            use(b)
+    return order
+
+
+def reorder_attributes_covariance(x, k=0):
+    cov = np.cov(x, rowvar=0)
+    #cov = np.abs(cov)
+    return x[:, reorder_features_by_similarity(cov)]
+
+
+def reorder_attributes_probability_score(x, k):
+    m = x.shape[1]
+    gmm = GMM(x, k)
+    probability = np.zeros((m, m))
+    for i in range(m):
+        for j in range(m):
+            if i >= j:
+                continue
+            probability[i, j] = probability[j, i] = \
+                score_dimension_pair(x, gmm, (i, j))
+    return x[:, reorder_features_by_similarity(probability)]
+
+
+
+def test(datasets=(),
+         normalization="stdev", reorder='none', score='probability',
+         print_latex=True):
     global results
-    if print_results:
+    print "%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score)
+
+    if print_latex:
         print r"\begin{tabular}{ l r r r }"
         print r"dataset & S(k-means) & S(gmm)& S(lac) \\"
         print r"\hline"
     results = []
     #for ds in [Table('vehicle', name='vehicle')]:
     #for ds in GDS_datasets():
-    for ds in continuous_uci_datasets():
+    for ds in datasets:
     #for ds in temporal_datasets():
         x, = ds.to_numpy("a")
         x_ma, = ds.to_numpy_MA("a")
@@ -224,26 +294,54 @@ def test(print_results=True):
         inds = np.where(x_ma.mask)
         x[inds] = np.take(col_mean, inds[1])
 
-        m, M = x.min(axis=0), x.max(axis=0)
-        x = (x - m) / (M - m)
-
-        np.random.shuffle(x.T)
-
-        # xn = x - means
-        #stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
-        #x /= stdev
-
         k = 10
         n_steps = 99
+
+        if normalization == 'none':
+            pass
+        elif normalization == '01':
+            m, M = x.min(axis=0), x.max(axis=0)
+            x = (x - m) / (M - m)
+        elif normalization == 'stdev':
+            xn = x - means
+            stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
+            x /= stdev
+        else:
+            raise AttributeError('Unknonwn normalization type')
+
+        if reorder == 'none':
+            pass
+        elif reorder == 'shuffle':
+            np.random.shuffle(x.T)
+        elif reorder == 'covariance':
+            x = reorder_attributes_covariance(x)
+        elif reorder == 'probability':
+            x = reorder_attributes_probability_score(x, k)
+        else:
+            raise AttributeError('Unknown feature reordering type')
+
+        if score == 'covariance':
+            scorer = covariance_score
+        elif score == 'probability':
+            scorer = probability_score
+        elif score == 'global_probability':
+            scorer = global_probability_score
+        elif score == 'best_triplet':
+            scorer = best_triplet_variance_score
+        elif score == 'best_triplet_probability':
+            scorer = best_triplet_probability_score
 
         lac = LAC(x, k)
         km = KM(x, lac.k)
         gmm = GMM(x, lac.k)
 
-        km_score, gmm_score, lac_score = map(lambda r: probability_score(r, x), [km, gmm, lac])
-        if lac.k > 1:
-            results.append((km_score, gmm_score, lac_score))
-        if not print_results:
+        if lac.k < 2:
+            continue
+
+        km_score, gmm_score, lac_score = map(lambda r: scorer(r, x), [km, gmm, lac])
+        results.append((km_score, gmm_score, lac_score))
+        if not print_latex:
+            print "%40s %10.6f %10.6f %10.6f %i" % (ds.name, km_score, gmm_score, lac_score, lac.k)
             continue
         print "%s & " % ds.name.replace("_", "\_"),
         if km_score == min(km_score, gmm_score, lac_score):
@@ -273,8 +371,8 @@ def test(print_results=True):
         parallel_coordinates_plot(ds.name + ".gmm.png", x,
                                   means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
 
-    if print_results:
-        sprint r"\end{tabular}"
+    if print_latex:
+        print r"\end{tabular}"
     results = np.array(results)
 
 
@@ -299,6 +397,8 @@ def rank_plot():
     print avgranks, cd
     graph_ranks('ranks.pdf', avgranks, ["kmeans", 'gmm', 'lac'], cd=cd)
 
-for i in range(50):
-    test(False)
-    rank_plot()
+for normalization in ['01', 'stdev', 'none']:
+    for reorder in ['none', 'covariance', 'probability']:
+        for score in ['best_triplet_probability']:
+            test(chain(continuous_uci_datasets(), GDS_datasets()), print_latex=False,
+                 reorder='none', normalization='01', score='best_triplet_probability')
