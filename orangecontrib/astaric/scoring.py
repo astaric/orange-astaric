@@ -276,7 +276,7 @@ def test(datasets=(),
          normalization="stdev", reorder='none', score='probability',
          print_latex=True):
     global results
-    print "%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score)
+    #print "%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score)
 
     if print_latex:
         print r"\begin{tabular}{ l r r r }"
@@ -341,7 +341,7 @@ def test(datasets=(),
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, x), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print "%40s %10.6f %10.6f %10.6f %i" % (ds.name, km_score, gmm_score, lac_score, lac.k)
+            print "%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, lac.k)
             continue
         print "%s & " % ds.name.replace("_", "\_"),
         if km_score == min(km_score, gmm_score, lac_score):
@@ -396,6 +396,8 @@ def rank_plot():
     cd = compute_CD(avgranks, len(results))
     print avgranks, cd
     graph_ranks('ranks.pdf', avgranks, ["kmeans", 'gmm', 'lac'], cd=cd)
+
+print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
 
 for normalization in ['01', 'stdev', 'none']:
     for reorder in ['none', 'covariance', 'probability']:
