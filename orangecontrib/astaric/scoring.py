@@ -77,6 +77,10 @@ def KM(X, k):
 
 def LAC(X, k):
     w, means, covars, priors = em(X, k, 100)
+    realk = sum(1 for c in covars if (c > 1e-15).any())
+    print realk
+    return Result(np.array(means), np.array(covars), realk, [])
+
     squared_norms = _squared_norms(X)
     labels = - np.ones(X.shape[0], np.int32)
     distances = np.zeros(shape=(0,), dtype=np.float64)
@@ -276,12 +280,12 @@ def test(datasets=(),
          normalization="stdev", reorder='none', score='probability',
          print_latex=True):
     global results
-    #print "%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score)
+    #print("%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score))
 
     if print_latex:
-        print r"\begin{tabular}{ l r r r }"
-        print r"dataset & S(k-means) & S(gmm)& S(lac) \\"
-        print r"\hline"
+        print(r"\begin{tabular}{ l r r r }")
+        print(r"dataset & S(k-means) & S(gmm)& S(lac) \\")
+        print(r"\hline")
     results = []
     #for ds in [Table('vehicle', name='vehicle')]:
     #for ds in GDS_datasets():
@@ -332,30 +336,32 @@ def test(datasets=(),
             scorer = best_triplet_probability_score
 
         lac = LAC(x, k)
+        if lac.k < 2:
+            continue
+
         km = KM(x, lac.k)
         gmm = GMM(x, lac.k)
 
-        if lac.k < 2:
-            continue
+
 
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, x), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print "%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, lac.k)
+            print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, lac.k))
             continue
-        print "%s & " % ds.name.replace("_", "\_"),
+        print("%s & " % ds.name.replace("_", "\_"),)
         if km_score == min(km_score, gmm_score, lac_score):
-            print r"{\bf %.6f} &" % km_score,
+            print(r"{\bf %.6f} &" % km_score,)
         else:
-            print "%.6f &" % km_score,
+            print("%.6f &" % km_score,)
         if gmm_score == min(km_score, gmm_score, lac_score):
-            print r"{\bf %.6f} &" % gmm_score,
+            print(r"{\bf %.6f} &" % gmm_score,)
         else:
-            print "%.6f &" % gmm_score,
+            print("%.6f &" % gmm_score,)
         if lac_score == min(km_score, gmm_score, lac_score):
-            print r"{\bf %.6f} \\ %% %d" % (lac_score, lac.k)
+            print(r"{\bf %.6f} \\ %% %d" % (lac_score, lac.k))
         else:
-            print r"%.6f \\ %% %d" % (lac_score, lac.k)
+            print(r"%.6f \\ %% %d" % (lac_score, lac.k))
 
         def annotate(minis):
             def _annotate(ax):
@@ -372,7 +378,7 @@ def test(datasets=(),
                                   means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
 
     if print_latex:
-        print r"\end{tabular}"
+        print(r"\end{tabular}")
     results = np.array(results)
 
 
@@ -394,13 +400,13 @@ def rank_plot():
     from Orange.evaluation.scoring import graph_ranks
     avgranks = np.mean(np.argsort(np.argsort(results)) + 1, axis=0)
     cd = compute_CD(avgranks, len(results))
-    print avgranks, cd
+    print(avgranks, cd)
     graph_ranks('ranks.pdf', avgranks, ["kmeans", 'gmm', 'lac'], cd=cd)
 
 print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
 
-for normalization in ['01', 'stdev', 'none']:
+for normalization in ['none']:
     for reorder in ['none', 'covariance', 'probability']:
-        for score in ['best_triplet_probability']:
+        for score in ['covariance', 'probability', 'global_probability', 'best_triplet']:
             test(chain(continuous_uci_datasets(), GDS_datasets()), print_latex=False,
-                 reorder='none', normalization='01', score='best_triplet_probability')
+                 reorder=reorder, normalization=normalization, score=score)
