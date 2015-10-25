@@ -1,27 +1,37 @@
 from collections import namedtuple
-from Orange.evaluation.scoring import compute_CD
 from math import sqrt
 from itertools import chain
 
 import os
+import random
 import numpy as np
 import scipy.stats as stats
 import sklearn
 import sklearn.mixture
 import Orange
-from Orange.data import Domain, Table
-from Orange.data.imputation import ImputeTable
-from Orange.feature import Continuous
+from Orange.data import Domain, Table, ContinuousVariable
 from sklearn.cluster import _k_means
-from sklearn.cluster.k_means_ import _squared_norms
+#from sklearn.cluster.k_means_ import _squared_norms
 
-from orangecontrib.astaric.gmm import em
+#from orangecontrib.astaric.gmm import em
+from orangecontrib.astaric.lac import lac, create_contingencies
 
 np.random.seed(42)
 
 
 def iris():
     yield Table("iris")
+
+
+def impute(table):
+    col_mean = np.nanmean(table.X, axis=0)
+    inds = np.where(np.isnan(table))
+    table.X[inds] = np.take(col_mean, inds[1])
+
+
+def sample(table, p=0.1):
+    ind = np.array([1 if random.random() < p else 0 for i in table.X], dtype='bool')
+    return Table.from_numpy(table.domain, table.X[ind], table.Y[ind])
 
 def continuous_uci_datasets():
     datasets_dir = os.path.join(os.path.dirname(Orange.__file__), 'datasets')
@@ -31,9 +41,11 @@ def continuous_uci_datasets():
         if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab"]:
             continue
         table = Table(ds)
-        continuous_features = [a for a in table.domain.features if isinstance(a, Continuous)]
+        continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
         if len(continuous_features) > 5:
-            new_table = Table(Domain(continuous_features), ImputeTable(table))
+            print(ds)
+            new_table = Table(Domain(continuous_features), table)
+            impute(new_table)
             new_table.name = ds
             yield new_table
 
@@ -42,9 +54,10 @@ def GDS_datasets():
     datasets_dir = '/Users/anze/dev/orange-astaric/orangecontrib/astaric/GDS'
     for ds in [file for file in os.listdir(datasets_dir) if file.startswith('GDS') and file.endswith('tab')]:
         table = Table(os.path.join(datasets_dir, ds))
-        continuous_features = [a for a in table.domain.features if isinstance(a, Continuous)]
+        continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
         if len(continuous_features) > 5:
-            new_table = Table(Domain(continuous_features), ImputeTable(table))
+            new_table = Table(Domain(continuous_features), table)
+            impute(new_table)
             new_table.name = ds
             yield new_table
 
@@ -53,9 +66,10 @@ def temporal_datasets():
     datasets_dir = '/Users/anze/dev/orange-astaric/orangecontrib/astaric/temporal'
     for ds in [file for file in os.listdir(datasets_dir) if file.endswith('tab')]:
         table = Table(os.path.join(datasets_dir, ds))
-        continuous_features = [a for a in table.domain.features if isinstance(a, Continuous)]
+        continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
         if len(continuous_features) > 5:
-            new_table = Table(Domain(continuous_features), ImputeTable(table))
+            new_table = Table(Domain(continuous_features), table)
+            impute(new_table)
             new_table.name = ds
             yield new_table
 
@@ -76,9 +90,9 @@ def KM(X, k):
 
 
 def LAC(X, k):
-    w, means, covars, priors = em(X, k, 100)
+    conts = create_contingencies(X)
+    w, means, covars, priors = lac(conts, k, 100)
     realk = sum(1 for c in covars if (c > 1e-15).any())
-    print realk
     return Result(np.array(means), np.array(covars), realk, [])
 
     squared_norms = _squared_norms(X)
@@ -102,6 +116,7 @@ def LAC(X, k):
 def GMM(X, k):
     gmm = sklearn.mixture.GMM(n_components=k)
     gmm.fit(X)
+    return Result(gmm.means_, gmm.covars_, k, [])
     means = gmm.means_
     squared_norms = _squared_norms(X)
     labels = - np.ones(X.shape[0], np.int32)
@@ -132,16 +147,16 @@ def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lam
         for i, (mean, stdev) in enumerate(zip(means, stdevs)):
             y = [mean[j] + stdev[j] for j in range(len(mean))]
             y += [mean[j] - stdev[j] for j in range(len(mean))][::-1]
-            x = range(len(mean)) + range(len(mean))[::-1]
+            x = list(range(len(mean))) + list(range(len(mean)))[::-1]
 
-            poly = Polygon(zip(x, y), facecolor=colors[i], edgecolor='none', alpha=.5)
+            poly = Polygon(list(zip(x, y)), facecolor=colors[i], edgecolor='none', alpha=.5)
             plt.gca().add_patch(poly)
 
             y = [mean[j] + stdev[j] / 2 for j in range(len(mean))]
             y += [mean[j] - stdev[j] / 2 for j in range(len(mean))][::-1]
-            x = range(len(mean)) + range(len(mean))[::-1]
+            x = list(range(len(mean))) + list(range(len(mean)))[::-1]
 
-            poly = Polygon(zip(x, y), facecolor=colors[i], edgecolor='none', alpha=.8)
+            poly = Polygon(list(zip(x, y)), facecolor=colors[i], edgecolor='none', alpha=.8)
             plt.gca().add_patch(poly)
 
     ax.set_xlim([-.01, X.shape[1] - 0.93])
@@ -291,13 +306,8 @@ def test(datasets=(),
     #for ds in GDS_datasets():
     for ds in datasets:
     #for ds in temporal_datasets():
-        x, = ds.to_numpy("a")
-        x_ma, = ds.to_numpy_MA("a")
-        means = x_ma.mean(axis=0)
-        col_mean = stats.nanmean(x, axis=0)
-        inds = np.where(x_ma.mask)
-        x[inds] = np.take(col_mean, inds[1])
-
+        impute(ds)
+        x = ds.X
         k = 10
         n_steps = 99
 
@@ -307,7 +317,7 @@ def test(datasets=(),
             m, M = x.min(axis=0), x.max(axis=0)
             x = (x - m) / (M - m)
         elif normalization == 'stdev':
-            xn = x - means
+            xn = x - x.mean(axis=0)
             stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
             x /= stdev
         else:
@@ -335,33 +345,29 @@ def test(datasets=(),
         elif score == 'best_triplet_probability':
             scorer = best_triplet_probability_score
 
-        lac = LAC(x, k)
-        if lac.k < 2:
-            continue
 
-        km = KM(x, lac.k)
-        gmm = GMM(x, lac.k)
+        all_lac_scores = []
+        for n in range(10,11):
+            print('.', end='')
+            lac = LAC(ds, k)
+            all_lac_scores.append((lac.k, scorer(lac, ds.X)))
 
+#        print()
+#        for i in range(10, 11):
+#            lac_scores = [s for k, s in all_lac_scores if k == i]
+#            print("lac, %i, %f, %f, %f, %f" % (i, min(lac_scores or [0]), min([l for l in lac_scores if l] or [0]), max(lac_scores or [0]), sum([l for l in lac_scores if l] or [0]) / len([l for l in lac_scores if l] or [0])))
 
+        k = max(k for k, s in all_lac_scores)
+        #if lac.k < 2:
+        #    continue
+
+        km = KM(x, k)
+        gmm = GMM(x, k)
 
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, x), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, lac.k))
-            continue
-        print("%s & " % ds.name.replace("_", "\_"),)
-        if km_score == min(km_score, gmm_score, lac_score):
-            print(r"{\bf %.6f} &" % km_score,)
-        else:
-            print("%.6f &" % km_score,)
-        if gmm_score == min(km_score, gmm_score, lac_score):
-            print(r"{\bf %.6f} &" % gmm_score,)
-        else:
-            print("%.6f &" % gmm_score,)
-        if lac_score == min(km_score, gmm_score, lac_score):
-            print(r"{\bf %.6f} \\ %% %d" % (lac_score, lac.k))
-        else:
-            print(r"%.6f \\ %% %d" % (lac_score, lac.k))
+            print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, k))
 
         def annotate(minis):
             def _annotate(ax):
@@ -369,7 +375,6 @@ def test(datasets=(),
                     ax.plot([m-1, m, m+1], [.5, .5, .5])
             return _annotate
 
-        continue
         parallel_coordinates_plot(ds.name + ".kmeans.png", x,
                                   means=km.means, stdevs=np.sqrt(km.covars), annotate=annotate(km.minis))
         parallel_coordinates_plot(ds.name + ".lac.png", x,
@@ -405,8 +410,8 @@ def rank_plot():
 
 print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
 
-for normalization in ['none']:
-    for reorder in ['none', 'covariance', 'probability']:
-        for score in ['covariance', 'probability', 'global_probability', 'best_triplet']:
-            test(chain(continuous_uci_datasets(), GDS_datasets()), print_latex=False,
+for normalization in ['01']:
+    for reorder in ['none']:
+        for score in ['probability']:
+            test(chain(continuous_uci_datasets()), print_latex=False,
                  reorder=reorder, normalization=normalization, score=score)
