@@ -14,7 +14,8 @@ from sklearn.cluster import _k_means
 #from sklearn.cluster.k_means_ import _squared_norms
 
 #from orangecontrib.astaric.gmm import em
-from orangecontrib.astaric.lac import lac, create_contingencies
+from Orange.preprocess import Normalize
+from orangecontrib.astaric.lac import lac, create_contingencies, MIN_COVARIANCE
 
 np.random.seed(42)
 
@@ -39,14 +40,20 @@ def continuous_uci_datasets():
             continue
         if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab"]:
             continue
-        table = Table(ds)
-        continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
-        if len(continuous_features) > 5:
-            print(ds)
-            new_table = Table(Domain(continuous_features), table)
-            impute(new_table)
-            new_table.name = ds
-            yield new_table
+        table = open_ds(ds)
+        if table is not None:
+            table.name = ds
+            yield table
+
+def open_ds(ds, filter=True):
+    table = Table(ds)
+    continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
+    if not filter or len(continuous_features) > 5:
+        print(ds)
+        new_table = Table(Domain(continuous_features), table)
+        impute(new_table)
+        new_table.name = ds
+        return new_table
 
 
 def GDS_datasets():
@@ -91,7 +98,7 @@ def KM(X, k):
 def LAC(X, k):
     conts = create_contingencies(X)
     w, means, covars, priors = lac(X.X, conts, k, 100)
-    realk = sum(1 for c in covars if (c > 1e-15).any())
+    realk = sum(1 for c in covars if (c > MIN_COVARIANCE).any())
     return Result(np.array(means), np.array(covars), realk, [])
 
     squared_norms = _squared_norms(X)
@@ -293,7 +300,7 @@ def reorder_attributes_probability_score(x, k):
 
 def test(datasets=(),
          normalization="stdev", reorder='none', score='probability',
-         print_latex=True):
+         print_latex=True, k=10):
     global results
     #print("%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score))
 
@@ -304,30 +311,20 @@ def test(datasets=(),
     results = []
     #for ds in [Table('vehicle', name='vehicle')]:
     #for ds in GDS_datasets():
-    for ds in datasets:
+    for ds2 in datasets:
     #for ds in temporal_datasets():
-        print("before impute", ds.X.min(), ds.X.max())
-        ds = impute(ds)
-        print("after impute", ds.X.min(), ds.X.max())
-        x = ds.X
-        k = 10
+        ds = impute(ds2)
+        ds.name = ds2.name
         n_steps = 99
 
         if normalization == 'none':
             pass
         elif normalization == '01':
-            m, M = x.min(axis=0), x.max(axis=0)
-            span = (M - m)
-            span[span<1e-15] = 1
-            x = (x - m) / span
+            ds = Normalize(norm_type=Normalize.NormalizeBySpan)(ds)
         elif normalization == 'stdev':
-            xn = x - x.mean(axis=0)
-            stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
-            stdev[stdev<1e-15] = 1
-            x /= stdev
+            ds = Normalize(norm_type=Normalize.NormalizeBySD)(ds)
         else:
-            raise AttributeError('Unknonwn normalization type')
-        print("after normalize", x.min(), x.max())
+            raise AttributeError('Unknonwn normalization type "%s"' % (normalization,))
 
         if reorder == 'none':
             pass
@@ -338,9 +335,7 @@ def test(datasets=(),
         elif reorder == 'probability':
             x = reorder_attributes_probability_score(x, k)
         else:
-            raise AttributeError('Unknown feature reordering type')
-
-        ds.X = x
+            raise AttributeError('Unknown feature reordering type "%s"' % (reorder,))
 
         if score == 'covariance':
             scorer = covariance_score
@@ -352,11 +347,13 @@ def test(datasets=(),
             scorer = best_triplet_variance_score
         elif score == 'best_triplet_probability':
             scorer = best_triplet_probability_score
+        else:
+            raise AttributeError('Unknown scorer type "%s"' % (score,))
 
 
         all_lac_scores = []
         for n in range(10,11):
-            print('.', end='')
+            #print('.', end='')
             lac = LAC(ds, k)
             all_lac_scores.append((lac.k, scorer(lac, ds.X)))
 
@@ -370,14 +367,14 @@ def test(datasets=(),
         #    continue
 
         try:
-            km = KM(x, k)
-            gmm = GMM(x, k)
+            km = KM(ds.X, k)
+            gmm = GMM(ds.X, k)
         except:
-            print(x.min(), x.max())
+            print(ds.X.min(), ds.X.max())
             raise
 
 
-        km_score, gmm_score, lac_score = map(lambda r: scorer(r, x), [km, gmm, lac])
+        km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
             print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, k))
@@ -388,11 +385,11 @@ def test(datasets=(),
                     ax.plot([m-1, m, m+1], [.5, .5, .5])
             return _annotate
 
-        parallel_coordinates_plot(ds.name + ".kmeans.png", x,
+        parallel_coordinates_plot(ds.name + ".kmeans.png", ds.X,
                                   means=km.means, stdevs=np.sqrt(km.covars), annotate=annotate(km.minis))
-        parallel_coordinates_plot(ds.name + ".lac.png", x,
+        parallel_coordinates_plot(ds.name + ".lac.png", ds.X,
                                   means=lac.means, stdevs=np.sqrt(lac.covars), annotate=annotate(lac.minis))
-        parallel_coordinates_plot(ds.name + ".gmm.png", x,
+        parallel_coordinates_plot(ds.name + ".gmm.png", ds.X,
                                   means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
 
     if print_latex:
@@ -421,10 +418,36 @@ def rank_plot():
     print(avgranks, cd)
     graph_ranks('ranks.pdf', avgranks, ["kmeans", 'gmm', 'lac'], cd=cd)
 
-print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
 
-for normalization in ['01']:
-    for reorder in ['none']:
-        for score in ['covariance']:
-            test(chain(continuous_uci_datasets()), print_latex=False,
-                 reorder=reorder, normalization=normalization, score=score)
+if __name__ == '__main__':
+    from optparse import OptionParser
+    parser = OptionParser()
+    parser.add_option("-d", action="append", dest="datasets", )
+    parser.add_option("-r", action="append", dest="reorder",
+                      help="reorder features (none, shuffle, covariance, probability)")
+    parser.add_option("-n", action="append", dest="normalization",
+                      help="normalize features (none, 01, stdev)")
+    parser.add_option("-s", action="append", dest="score",
+                      help="scoring function (covariance, probability, global_probability, best_triplet, best_triplet_probability)")
+    parser.add_option("-k", dest="k", type="int", default=10,
+                      help="number of clusters")
+    (options, args) = parser.parse_args()
+
+    print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
+
+    if options.datasets:
+        def datasets():
+            for d in options.datasets:
+                table = open_ds(d, filter=False)
+                table.name = d
+                yield table
+        datasets = datasets()
+    else:
+        datasets = chain(continuous_uci_datasets())
+
+
+    for normalization in options.normalization or ["01"]:
+        for reorder in options.reorder or ["none"]:
+            for score in options.score or ["covariance"]:
+                test(datasets, print_latex=False,
+                     reorder=reorder, normalization=normalization, score=score, k=options.k)
