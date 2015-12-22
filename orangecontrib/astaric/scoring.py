@@ -24,9 +24,8 @@ def iris():
 
 
 def impute(table):
-    col_mean = np.nanmean(table.X, axis=0)
-    inds = np.where(np.isnan(table))
-    table.X[inds] = np.take(col_mean, inds[1])
+    from Orange.preprocess import SklImpute
+    return SklImpute()(table)
 
 
 def sample(table, p=0.1):
@@ -91,7 +90,7 @@ def KM(X, k):
 
 def LAC(X, k):
     conts = create_contingencies(X)
-    w, means, covars, priors = lac(conts, k, 100)
+    w, means, covars, priors = lac(X.X, conts, k, 100)
     realk = sum(1 for c in covars if (c > 1e-15).any())
     return Result(np.array(means), np.array(covars), realk, [])
 
@@ -163,6 +162,7 @@ def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lam
     annotate(ax)
     ax.axis('off')
     plt.savefig(filename, bbox_inches='tight')
+    plt.close()
 
 
 def covariance_score(result, x):
@@ -306,7 +306,9 @@ def test(datasets=(),
     #for ds in GDS_datasets():
     for ds in datasets:
     #for ds in temporal_datasets():
-        impute(ds)
+        print("before impute", ds.X.min(), ds.X.max())
+        ds = impute(ds)
+        print("after impute", ds.X.min(), ds.X.max())
         x = ds.X
         k = 10
         n_steps = 99
@@ -315,13 +317,17 @@ def test(datasets=(),
             pass
         elif normalization == '01':
             m, M = x.min(axis=0), x.max(axis=0)
-            x = (x - m) / (M - m)
+            span = (M - m)
+            span[span<1e-15] = 1
+            x = (x - m) / span
         elif normalization == 'stdev':
             xn = x - x.mean(axis=0)
             stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
+            stdev[stdev<1e-15] = 1
             x /= stdev
         else:
             raise AttributeError('Unknonwn normalization type')
+        print("after normalize", x.min(), x.max())
 
         if reorder == 'none':
             pass
@@ -333,6 +339,8 @@ def test(datasets=(),
             x = reorder_attributes_probability_score(x, k)
         else:
             raise AttributeError('Unknown feature reordering type')
+
+        ds.X = x
 
         if score == 'covariance':
             scorer = covariance_score
@@ -361,8 +369,13 @@ def test(datasets=(),
         #if lac.k < 2:
         #    continue
 
-        km = KM(x, k)
-        gmm = GMM(x, k)
+        try:
+            km = KM(x, k)
+            gmm = GMM(x, k)
+        except:
+            print(x.min(), x.max())
+            raise
+
 
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, x), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
@@ -412,6 +425,6 @@ print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
 
 for normalization in ['01']:
     for reorder in ['none']:
-        for score in ['probability']:
+        for score in ['covariance']:
             test(chain(continuous_uci_datasets()), print_latex=False,
                  reorder=reorder, normalization=normalization, score=score)

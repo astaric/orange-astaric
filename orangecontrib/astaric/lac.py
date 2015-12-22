@@ -3,6 +3,8 @@ from Orange.preprocess import Discretize
 from Orange.preprocess.discretize import EqualFreq
 import numpy as np
 
+MIN_COVARIANCE = 1e-9
+
 
 def initialize_random(conts, k):
     mu = np.zeros((k, len(conts)))
@@ -21,7 +23,7 @@ def initialize_random(conts, k):
             mu[j, i] = mu1
             sigma[j, i] = sigma1
 
-    sigma[sigma < 1e-3] = 1e-3
+    sigma[sigma < MIN_COVARIANCE] = MIN_COVARIANCE
     return mu, sigma
 
 def initialize_kmeans(conts, k):
@@ -54,7 +56,21 @@ def initialize_kmeans(conts, k):
     return means, covars
 
 
-def lac(conts, k, nsteps=30, window_size=1):
+def initialize_sample_kmeans(X, k):
+    import sklearn.cluster
+    kmeans = sklearn.cluster.KMeans(n_clusters=k)
+    Y = kmeans.fit_predict(X)
+    means = kmeans.cluster_centers_
+    covars = np.zeros((k, X.shape[1]))
+    for j in range(k):
+        xn = X[Y == j, :] - means[j]
+        covars[j] = np.sum(xn ** 2, axis=0) / len(xn)
+
+    covars[covars < MIN_COVARIANCE] = MIN_COVARIANCE
+    return means, covars
+
+
+def lac(X, conts, k, nsteps=30, window_size=1):
     """
     k expected classes,
     m data points,
@@ -68,10 +84,15 @@ def lac(conts, k, nsteps=30, window_size=1):
 
 
     import sys; sys.stdout.flush()
-    means, covars = initialize_random(conts, k)
+    if X is not None:
+        means, covars = initialize_sample_kmeans(X, k)
+    else:
+        means, covars = initialize_random(conts, k)
+
     #means, covars = initialize_kmeans(conts, k)
 
     w = [np.empty((k, len(c[0]),)) for c in conts]
+
 
     for i in range(1, nsteps + 1):
         for l, (c, cw) in enumerate(conts):
@@ -111,7 +132,7 @@ def lac(conts, k, nsteps=30, window_size=1):
                         return w, means, covars, priors
                 else:
                     mu = means[j, l]
-                    sigma = 1e-3
+                    sigma = MIN_COVARIANCE
                 means[j, l] = mu
                 covars[j, l] = sigma
 
