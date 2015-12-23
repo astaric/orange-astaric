@@ -99,6 +99,7 @@ def LAC(X, k):
     conts = create_contingencies(X)
     w, means, covars, priors = lac(X.X, conts, k, 100)
     realk = sum(1 for c in covars if (c > MIN_COVARIANCE).all())
+    means, covars = get_cluster_parameters(X.X, get_cluster_weights(priors, means, covars, X.X, crisp=True))
 
     return Result(np.array(means), np.array(covars), realk, [])
 
@@ -117,6 +118,39 @@ def GMM(X, k):
         xn = X[labels == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / (len(xn) if len(xn) else 1.)
     return Result(means, covars, k, [])
+
+
+def get_cluster_weights(priors, means, covars, x, crisp=True):
+    k, m = means.shape
+    w = np.zeros((len(x), k))
+    for j in range(k):
+        if any(np.abs(covars[j]) < 1e-15):
+            assert False, 'covars should be fixed'
+
+        det = covars[j].prod()
+        inv_covars = 1. / covars[j]
+        xn = x - means[j]
+        factor = (2.0 * np.pi) ** (x.shape[1]/ 2.0) * det ** 0.5
+        w[:, j] = priors[j] * np.exp(np.sum(xn * inv_covars * xn, axis=1) * -.5) / factor
+    wsum = w.sum(axis=0)
+    wsum[wsum == 0] = 1.
+    w /= wsum
+
+    if crisp:
+        m = w.argmax(axis=1)
+        w = np.zeros(w.shape)
+        w[np.arange(len(w)), m] = 1.
+
+    return w
+
+def get_cluster_parameters(x, w):
+    wsums = w.sum(axis=0)[:, None]
+    wsums[wsums == 0] = 1.
+    # weighted sum of rows, divided by sum of weights (for each cluster)
+    means = (w.T[:, :, None] * x[None, :, :]).sum(axis=1) / wsums
+    covars = (w.T[:, :, None] * (x[None, :, :] - means[:, None, :]) ** 2).sum(axis=1) / wsums
+
+    return means, covars
 
 
 def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lambda ax: None):
