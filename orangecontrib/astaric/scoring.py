@@ -98,26 +98,9 @@ def KM(X, k):
 def LAC(X, k):
     conts = create_contingencies(X)
     w, means, covars, priors = lac(X.X, conts, k, 100)
-    realk = sum(1 for c in covars if (c > MIN_COVARIANCE).any())
+    realk = sum(1 for c in covars if (c > MIN_COVARIANCE).all())
+
     return Result(np.array(means), np.array(covars), realk, [])
-
-    squared_norms = _squared_norms(X)
-    labels = - np.ones(X.shape[0], np.int32)
-    distances = np.zeros(shape=(0,), dtype=np.float64)
-    _k_means._assign_labels_array(X, squared_norms, means, labels, distances=distances)
-    covars = np.zeros((k, X.shape[1]))
-
-    realk = 0
-    realmeans = []
-    realcovars = []
-    for j in range(k):
-        xn = X[labels == j, :] - means[j]
-        if len(xn):
-            realk += 1
-            realmeans.append(means[j])
-            realcovars.append(np.sum(xn ** 2, axis=0) / len(xn))
-    return Result(np.array(realmeans), np.array(realcovars), realk, [])
-
 
 def GMM(X, k):
     gmm = sklearn.mixture.GMM(n_components=k)
@@ -362,13 +345,13 @@ def test(datasets=(),
 #            lac_scores = [s for k, s in all_lac_scores if k == i]
 #            print("lac, %i, %f, %f, %f, %f" % (i, min(lac_scores or [0]), min([l for l in lac_scores if l] or [0]), max(lac_scores or [0]), sum([l for l in lac_scores if l] or [0]) / len([l for l in lac_scores if l] or [0])))
 
-        k = max(k for k, s in all_lac_scores)
+        realk = max(k for k, s in all_lac_scores)
         #if lac.k < 2:
         #    continue
 
         try:
-            km = KM(ds.X, k)
-            gmm = GMM(ds.X, k)
+            km = KM(ds.X, realk)
+            gmm = GMM(ds.X, realk)
         except:
             print(ds.X.min(), ds.X.max())
             raise
@@ -377,7 +360,8 @@ def test(datasets=(),
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score, lac_score, k))
+            print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score,
+                                               lac_score, realk))
 
         def annotate(minis):
             def _annotate(ax):
