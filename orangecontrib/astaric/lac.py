@@ -164,7 +164,8 @@ def create_contingencies(X, callback=None):
                 i: v[0] if len(v) == 1 else v[0] + (v[1] - v[0])
                 for i, v in enumerate(float_values)
             }
-        except ValueError:
+        except ValueError as ex:
+            print(ex)
             bin_centers = {
                 i: i
                 for i, v in enumerate(cleaned_values)

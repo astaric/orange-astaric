@@ -38,7 +38,8 @@ def continuous_uci_datasets():
     for ds in [file for file in os.listdir(datasets_dir) if file.endswith('tab')]:
         if ds in ["adult.tab"]:
             continue
-        if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab"]:
+        if ds in ["adult_sample.tab", "horse-colic_learn.tab", "horse-colic_test.tab",
+                  "geo-gds360.tab"]:
             continue
         table = open_ds(ds)
         if table is not None:
@@ -49,7 +50,7 @@ def open_ds(ds, filter=True):
     table = Table(ds)
     continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
     if not filter or len(continuous_features) > 5:
-        print(ds)
+        #print(ds)
         new_table = Table(Domain(continuous_features), table)
         impute(new_table)
         new_table.name = ds
@@ -80,7 +81,7 @@ def temporal_datasets():
             yield new_table
 
 
-Result = namedtuple('results', ['means', 'covars', 'k', 'minis'])
+Result = namedtuple('results', ['priors', 'means', 'covars', 'labels', 'k', 'minis'])
 
 
 def KM(X, k):
@@ -92,32 +93,27 @@ def KM(X, k):
     for j in range(k):
         xn = X[Y == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / len(xn)
-    return Result(means, covars, k, [])
+
+    priors = np.ones((k,)) / k
+    return Result(priors, means, covars, k, Y, [])
 
 
 def LAC(X, k):
     conts = create_contingencies(X)
     w, means, covars, priors = lac(X.X, conts, k, 100)
     realk = sum(1 for c in covars if (c > MIN_COVARIANCE).all())
-    means, covars = get_cluster_parameters(X.X, get_cluster_weights(priors, means, covars, X.X, crisp=True))
+    w, defined = get_cluster_weights(priors, means, covars, X.X, crisp=True)
+    means, covars = get_cluster_parameters(X.X, w)
+    labels = w.argmax(axis=1)
 
-    return Result(np.array(means), np.array(covars), realk, [])
+    return Result(priors, np.array(means), np.array(covars), labels, realk, [])
 
 def GMM(X, k):
     gmm = sklearn.mixture.GMM(n_components=k)
     gmm.fit(X)
-    return Result(gmm.means_, gmm.covars_, k, [])
-    means = gmm.means_
-    squared_norms = _squared_norms(X)
-    labels = - np.ones(X.shape[0], np.int32)
-    distances = np.zeros(shape=(0,), dtype=np.float64)
-    _k_means._assign_labels_array(X, squared_norms, means, labels, distances=distances)
-    covars = np.zeros((k, X.shape[1]))
-
-    for j in range(k):
-        xn = X[labels == j, :] - means[j]
-        covars[j] = np.sum(xn ** 2, axis=0) / (len(xn) if len(xn) else 1.)
-    return Result(means, covars, k, [])
+    Y = gmm.predict(X)
+    priors = np.ones((k,)) / k
+    return Result(priors, gmm.means_, gmm.covars_, k, Y, [])
 
 
 def get_cluster_weights(priors, means, covars, x, crisp=True):
@@ -125,6 +121,7 @@ def get_cluster_weights(priors, means, covars, x, crisp=True):
     w = np.zeros((len(x), k))
     for j in range(k):
         if any(np.abs(covars[j]) < 1e-15):
+            continue
             assert False, 'covars should be fixed'
 
         det = covars[j].prod()
@@ -133,7 +130,8 @@ def get_cluster_weights(priors, means, covars, x, crisp=True):
         factor = (2.0 * np.pi) ** (x.shape[1]/ 2.0) * det ** 0.5
         w[:, j] = priors[j] * np.exp(np.sum(xn * inv_covars * xn, axis=1) * -.5) / factor
     wsum = w.sum(axis=0)
-    wsum[wsum == 0] = 1.
+    invalid = wsum == 0
+    wsum[invalid] = 1.
     w /= wsum
 
     if crisp:
@@ -141,7 +139,7 @@ def get_cluster_weights(priors, means, covars, x, crisp=True):
         w = np.zeros(w.shape)
         w[np.arange(len(w)), m] = 1.
 
-    return w
+    return w, ~invalid
 
 def get_cluster_parameters(x, w):
     wsums = w.sum(axis=0)[:, None]
@@ -151,6 +149,9 @@ def get_cluster_parameters(x, w):
     covars = (w.T[:, :, None] * (x[None, :, :] - means[:, None, :]) ** 2).sum(axis=1) / wsums
 
     return means, covars
+
+
+
 
 
 def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lambda ax: None):
@@ -190,6 +191,13 @@ def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lam
 
 
 def covariance_score(result, x):
+    means = x.mean(axis=0)
+    xn = x - means
+    stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
+
+    return np.sqrt(result.covars / stdev).sum() / xn.shape[1]
+
+def corrected_covariance_score(result, x):
     means = x.mean(axis=0)
     xn = x - means
     stdev = np.sqrt(np.sum(xn ** 2, axis=0) / len(xn))
@@ -266,6 +274,31 @@ def best_triplet_probability_score(result, x):
         score_dimension_pair(x, result, dims)
         for dims in zip(range(x.shape[1]), range(1, x.shape[1]), range(2, x.shape[1])))
 
+def silhouette_score(results, x):
+    k = results.means.shape[0]
+    priors = np.ones((k,)) / k
+    w, d = get_cluster_weights(priors, results.means, results.covars, x)
+    labels = w.argmax(axis=1)
+
+    if not 2 <= len(np.unique(labels)) < len(x)-1:
+        return -1
+
+    return sklearn.metrics.silhouette_score(x, labels)
+
+def silhouette_d_score(results, x):
+    k = results.means.shape[0]
+    priors = np.ones((k,)) / k
+    w, invalid = get_cluster_weights(priors, results.means, results.covars, x)
+    labels = w.argmax(axis=1)
+
+    x = x[~invalid, :]
+    labels = labels[~invalid]
+
+    if not 2 <= len(np.unique(labels)) < len(x)-1:
+        return -1
+
+
+    return sklearn.metrics.silhouette_score(x, labels)
 
 def reorder_features_by_similarity(sim_matrix):
     order = []
@@ -364,6 +397,10 @@ def test(datasets=(),
             scorer = best_triplet_variance_score
         elif score == 'best_triplet_probability':
             scorer = best_triplet_probability_score
+        elif score == 'silhouette':
+            scorer = silhouette_score
+        elif score == 'silhouette_d':
+            scorer = silhouette_d_score
         else:
             raise AttributeError('Unknown scorer type "%s"' % (score,))
 
@@ -379,7 +416,7 @@ def test(datasets=(),
 #            lac_scores = [s for k, s in all_lac_scores if k == i]
 #            print("lac, %i, %f, %f, %f, %f" % (i, min(lac_scores or [0]), min([l for l in lac_scores if l] or [0]), max(lac_scores or [0]), sum([l for l in lac_scores if l] or [0]) / len([l for l in lac_scores if l] or [0])))
 
-        realk = max(k for k, s in all_lac_scores)
+        realk = max(all_lac_scores, key=lambda x:x[1])[0]
         #if lac.k < 2:
         #    continue
 
@@ -413,6 +450,7 @@ def test(datasets=(),
     if print_latex:
         print(r"\end{tabular}")
     results = np.array(results)
+    comparison_plot()
 
 
 def comparison_plot():
@@ -423,7 +461,7 @@ def comparison_plot():
     lac = results[1:, 2]
 
     plt.plot(gmm, lac, 'x')
-    plt.plot([0, 80], [0, 80])
+    plt.plot([-2, 2], [-2, 2])
     plt.xlabel("gmm")
     plt.ylabel("lac")
     plt.show()
@@ -446,7 +484,8 @@ if __name__ == '__main__':
     parser.add_option("-n", action="append", dest="normalization",
                       help="normalize features (none, 01, stdev)")
     parser.add_option("-s", action="append", dest="score",
-                      help="scoring function (covariance, probability, global_probability, best_triplet, best_triplet_probability)")
+                      help="scoring function (covariance, probability, global_probability, best_triplet, "
+                           "best_triplet_probability, silhouette)")
     parser.add_option("-k", dest="k", type="int", default=10,
                       help="number of clusters")
     (options, args) = parser.parse_args()
