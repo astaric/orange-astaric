@@ -9,7 +9,7 @@ import scipy.stats as stats
 import sklearn
 import sklearn.mixture
 import Orange
-from Orange.data import Domain, Table, ContinuousVariable
+from Orange.data import Domain, Table, ContinuousVariable, DiscreteVariable
 from sklearn.cluster import _k_means
 #from sklearn.cluster.k_means_ import _squared_norms
 
@@ -50,7 +50,7 @@ def open_ds(ds, filter=True):
     table = Table(ds)
     continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
     if not filter or len(continuous_features) > 5:
-        #print(ds)
+        print(ds)
         new_table = Table(Domain(continuous_features), table)
         impute(new_table)
         new_table.name = ds
@@ -81,42 +81,39 @@ def temporal_datasets():
             yield new_table
 
 
-Result = namedtuple('results', ['priors', 'means', 'covars', 'labels', 'k', 'minis'])
+Result = namedtuple('results', ['priors', 'means', 'covars', 'k', 'minis'])
 
 
 def KM(X, k):
     kmeans = sklearn.cluster.KMeans(n_clusters=k)
     Y = kmeans.fit_predict(X)
 
+    priors = np.zeros((k,))
     means = kmeans.cluster_centers_
     covars = np.zeros((k, X.shape[1]))
     for j in range(k):
+        priors[j] = (Y == j).sum()
         xn = X[Y == j, :] - means[j]
         covars[j] = np.sum(xn ** 2, axis=0) / len(xn)
-
-    priors = np.ones((k,)) / k
-    return Result(priors, means, covars, k, Y, [])
+    priors /= sum(priors)
+    return Result(priors, means, covars, k, [])
 
 
 def LAC(X, k):
     conts = create_contingencies(X)
     w, means, covars, priors = lac(X.X, conts, k, 100)
     realk = sum(1 for c in covars if (c > MIN_COVARIANCE).all())
-    w, defined = get_cluster_weights(priors, means, covars, X.X, crisp=True)
-    means, covars = get_cluster_parameters(X.X, w)
-    labels = w.argmax(axis=1)
+    #means, covars = get_cluster_parameters(X.X, get_cluster_weights(priors, means, covars, X.X, crisp=True)[0])
 
-    return Result(priors, np.array(means), np.array(covars), labels, realk, [])
+    return Result(priors, np.array(means), np.array(covars), realk, [])
 
 def GMM(X, k):
     gmm = sklearn.mixture.GMM(n_components=k)
     gmm.fit(X)
-    Y = gmm.predict(X)
-    priors = np.ones((k,)) / k
-    return Result(priors, gmm.means_, gmm.covars_, k, Y, [])
+    return Result(gmm.weights_, gmm.means_, gmm.covars_, k, [])
 
 
-def get_cluster_weights(priors, means, covars, x, crisp=True):
+def get_cluster_weights(priors, means, covars, x, crisp=True, eps=1e-15):
     k, m = means.shape
     w = np.zeros((len(x), k))
     for j in range(k):
@@ -129,9 +126,9 @@ def get_cluster_weights(priors, means, covars, x, crisp=True):
         xn = x - means[j]
         factor = (2.0 * np.pi) ** (x.shape[1]/ 2.0) * det ** 0.5
         w[:, j] = priors[j] * np.exp(np.sum(xn * inv_covars * xn, axis=1) * -.5) / factor
+    defined = w.sum(axis=1) > eps
     wsum = w.sum(axis=0)
-    invalid = wsum == 0
-    wsum[invalid] = 1.
+    wsum[wsum==0] = 1.
     w /= wsum
 
     if crisp:
@@ -139,7 +136,7 @@ def get_cluster_weights(priors, means, covars, x, crisp=True):
         w = np.zeros(w.shape)
         w[np.arange(len(w)), m] = 1.
 
-    return w, ~invalid
+    return w, defined
 
 def get_cluster_parameters(x, w):
     wsums = w.sum(axis=0)[:, None]
@@ -277,28 +274,23 @@ def best_triplet_probability_score(result, x):
 def silhouette_score(results, x):
     k = results.means.shape[0]
     priors = np.ones((k,)) / k
-    w, d = get_cluster_weights(priors, results.means, results.covars, x)
+    w = get_cluster_weights(priors, results.means, results.covars, x)
     labels = w.argmax(axis=1)
-
-    if not 2 <= len(np.unique(labels)) < len(x)-1:
-        return -1
-
     return sklearn.metrics.silhouette_score(x, labels)
 
 def silhouette_d_score(results, x):
-    k = results.means.shape[0]
-    priors = np.ones((k,)) / k
-    w, invalid = get_cluster_weights(priors, results.means, results.covars, x)
+    w, defined = get_cluster_weights(results.priors, results.means, results.covars, x)
     labels = w.argmax(axis=1)
+    x = x[defined, :]
+    labels = labels[defined]
 
-    x = x[~invalid, :]
-    labels = labels[~invalid]
-
-    if not 2 <= len(np.unique(labels)) < len(x)-1:
+    if len(np.unique(labels)) < 2:
         return -1
 
-
-    return sklearn.metrics.silhouette_score(x, labels)
+    class R(float): pass
+    result = R(sklearn.metrics.silhouette_score(x, labels))
+    result.defined = defined
+    return result
 
 def reorder_features_by_similarity(sim_matrix):
     order = []
@@ -350,7 +342,7 @@ def reorder_attributes_probability_score(x, k):
 
 def test(datasets=(),
          normalization="stdev", reorder='none', score='probability',
-         print_latex=True, k=10):
+         print_latex=True, k=10, eps=1e-15):
     global results
     #print("%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score))
 
@@ -406,7 +398,7 @@ def test(datasets=(),
 
 
         all_lac_scores = []
-        for n in range(10,11):
+        for n in range(1,11):
             #print('.', end='')
             lac = LAC(ds, k)
             all_lac_scores.append((lac.k, scorer(lac, ds.X)))
@@ -416,23 +408,40 @@ def test(datasets=(),
 #            lac_scores = [s for k, s in all_lac_scores if k == i]
 #            print("lac, %i, %f, %f, %f, %f" % (i, min(lac_scores or [0]), min([l for l in lac_scores if l] or [0]), max(lac_scores or [0]), sum([l for l in lac_scores if l] or [0]) / len([l for l in lac_scores if l] or [0])))
 
-        realk = max(all_lac_scores, key=lambda x:x[1])[0]
+        realk = max(k for k, s in all_lac_scores)
         #if lac.k < 2:
         #    continue
 
         try:
+            lac = LAC(ds, realk)
             km = KM(ds.X, realk)
             gmm = GMM(ds.X, realk)
         except:
             print(ds.X.min(), ds.X.max())
             raise
 
-
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print("%s,%s,%s,%s,%f,%f,%f,%i" % (normalization, reorder, score, ds.name, km_score, gmm_score,
-                                               lac_score, realk))
+            print("%s,%s,%s,%s,%f,%f,%f,%i,%f,%f" % (normalization, reorder, score, ds.name, km_score, gmm_score,
+                                               lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
+                                                  len(ds.X)))
+
+        w1, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=False)
+        w2, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=True)
+        w2 = np.argmax(w2, axis=1)[:, None]
+
+        domain = Domain([ContinuousVariable("p%d" % i) for i in range(w1.shape[1])])
+        print(domain, w1.shape)
+        probs = Table(domain, w1)
+        labels = Table(Domain([DiscreteVariable("label", values=list(range(k)))]), w2)
+
+        tbl = Table.concatenate((ds, probs, labels))
+        tbl.save(ds2.name + ".lac.tab")
+        print(tbl.name + ".lac.tab")
+
+
+
 
         def annotate(minis):
             def _annotate(ax):
@@ -447,10 +456,27 @@ def test(datasets=(),
         parallel_coordinates_plot(ds.name + ".gmm.png", ds.X,
                                   means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
 
+        import matplotlib.pyplot as plt
+        import matplotlib.mlab as mlab
+        import math
+
+        iris = Table("iris")
+        for m in range(lac.means.shape[1]):
+            plt.clf()
+            for p, mean, variance, c in zip(lac.priors, lac.means[:, m], lac.covars[:, m], "brg"):
+                sigma = math.sqrt(variance)
+                x = np.linspace(0,1,100)
+                plt.plot(x,p * mlab.normpdf(x, mean,sigma), color=c)
+            plt.plot(ds.X[:, m].ravel() + np.random.random(len(ds)) * 0.02, [0.05]*len(ds.X) + iris.Y.ravel() * 0.1,
+                     "k|")
+            plt.ylabel("pdf")
+            plt.xlabel(iris.domain[m].name)
+            plt.savefig("axis-%d.pdf" % m)
+
     if print_latex:
         print(r"\end{tabular}")
     results = np.array(results)
-    comparison_plot()
+    #comparison_plot()
 
 
 def comparison_plot():
@@ -488,9 +514,11 @@ if __name__ == '__main__':
                            "best_triplet_probability, silhouette)")
     parser.add_option("-k", dest="k", type="int", default=10,
                       help="number of clusters")
+    parser.add_option("-e", dest="e", type="float", default=1e-15,
+                      help="dropout eps")
     (options, args) = parser.parse_args()
 
-    print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k')
+    print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k,dropout,dropout%')
 
     if options.datasets:
         def datasets():
@@ -507,4 +535,4 @@ if __name__ == '__main__':
         for reorder in options.reorder or ["none"]:
             for score in options.score or ["covariance"]:
                 test(datasets, print_latex=False,
-                     reorder=reorder, normalization=normalization, score=score, k=options.k)
+                     reorder=reorder, normalization=normalization, score=score, k=options.k, eps=options.e)
