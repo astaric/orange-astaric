@@ -325,7 +325,8 @@ def reorder_features_by_similarity(sim_matrix):
 def reorder_attributes_covariance(ds, k=0):
     cov = np.cov(ds.X, rowvar=0)
     #cov = np.abs(cov)
-    return ds[:, reorder_features_by_similarity(cov)]
+    order = tuple(reorder_features_by_similarity(cov))
+    return ds[:, order]
 
 
 def reorder_attributes_probability_score(x, k):
@@ -375,7 +376,9 @@ def test(datasets=(),
         elif reorder == 'shuffle':
             np.random.shuffle(x.T)
         elif reorder == 'covariance':
+            print(ds.domain)
             ds = reorder_attributes_covariance(ds)
+            print(ds.domain)
         elif reorder == 'probability':
             x = reorder_attributes_probability_score(x, k)
         else:
@@ -400,7 +403,7 @@ def test(datasets=(),
 
 
         all_lac_scores = []
-        for n in range(1,11):
+        for n in range(10,11):
             #print('.', end='')
             lac = LAC(ds, k)
             all_lac_scores.append((lac.k, scorer(lac, ds.X)))
@@ -451,11 +454,11 @@ def test(datasets=(),
                     ax.plot([m-1, m, m+1], [.5, .5, .5])
             return _annotate
 
-        parallel_coordinates_plot(ds.name + ".kmeans.png", ds.X,
+        parallel_coordinates_plot(ds.name + ".kmeans.pdf", ds.X,
                                   means=km.means, stdevs=np.sqrt(km.covars), annotate=annotate(km.minis))
-        parallel_coordinates_plot(ds.name + ".lac.png", ds.X,
+        parallel_coordinates_plot(ds.name + ".lac.pdf", ds.X,
                                   means=lac.means, stdevs=np.sqrt(lac.covars), annotate=annotate(lac.minis))
-        parallel_coordinates_plot(ds.name + ".gmm.png", ds.X,
+        parallel_coordinates_plot(ds.name + ".gmm.pdf", ds.X,
                                   means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
 
         import matplotlib.pyplot as plt
@@ -534,7 +537,7 @@ if __name__ == '__main__':
 
 
     for normalization in options.normalization or ["01"]:
-        for reorder in options.reorder or ["covariance"]:
+        for reorder in options.reorder or ["none"]:
             for score in options.score or ["silhouette_d"]:
                 test(datasets, print_latex=False,
                      reorder=reorder, normalization=normalization, score=score, k=options.k, eps=options.e)
