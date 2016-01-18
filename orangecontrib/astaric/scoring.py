@@ -100,7 +100,7 @@ def KM(X, k):
 
 
 def LAC(X, k):
-    conts = create_contingencies(X)
+    conts = create_contingencies(X, n=10)
     w, means, covars, priors = lac(X.X, conts, k, 100)
     realk = sum(1 for c in covars if (c > MIN_COVARIANCE).all())
     #means, covars = get_cluster_parameters(X.X, get_cluster_weights(priors, means, covars, X.X, crisp=True)[0])
@@ -284,10 +284,12 @@ def silhouette_d_score(results, x):
     x = x[defined, :]
     labels = labels[defined]
 
-    if len(np.unique(labels)) < 2:
-        return -1
-
     class R(float): pass
+    if len(np.unique(labels)) < 2:
+        r = R(-1.)
+        r.defined = defined
+        return r
+
     result = R(sklearn.metrics.silhouette_score(x, labels))
     result.defined = defined
     return result
@@ -320,10 +322,10 @@ def reorder_features_by_similarity(sim_matrix):
     return order
 
 
-def reorder_attributes_covariance(x, k=0):
-    cov = np.cov(x, rowvar=0)
+def reorder_attributes_covariance(ds, k=0):
+    cov = np.cov(ds.X, rowvar=0)
     #cov = np.abs(cov)
-    return x[:, reorder_features_by_similarity(cov)]
+    return ds[:, reorder_features_by_similarity(cov)]
 
 
 def reorder_attributes_probability_score(x, k):
@@ -373,7 +375,7 @@ def test(datasets=(),
         elif reorder == 'shuffle':
             np.random.shuffle(x.T)
         elif reorder == 'covariance':
-            x = reorder_attributes_covariance(x)
+            ds = reorder_attributes_covariance(ds)
         elif reorder == 'probability':
             x = reorder_attributes_probability_score(x, k)
         else:
@@ -424,7 +426,7 @@ def test(datasets=(),
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
             print("%s,%s,%s,%s,%f,%f,%f,%i,%f,%f" % (normalization, reorder, score, ds.name, km_score, gmm_score,
-                                               lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
+                                                  lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
                                                   len(ds.X)))
 
         w1, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=False)
@@ -460,18 +462,18 @@ def test(datasets=(),
         import matplotlib.mlab as mlab
         import math
 
-        iris = Table("iris")
-        for m in range(lac.means.shape[1]):
-            plt.clf()
-            for p, mean, variance, c in zip(lac.priors, lac.means[:, m], lac.covars[:, m], "brg"):
-                sigma = math.sqrt(variance)
-                x = np.linspace(0,1,100)
-                plt.plot(x,p * mlab.normpdf(x, mean,sigma), color=c)
-            plt.plot(ds.X[:, m].ravel() + np.random.random(len(ds)) * 0.02, [0.05]*len(ds.X) + iris.Y.ravel() * 0.1,
-                     "k|")
-            plt.ylabel("pdf")
-            plt.xlabel(iris.domain[m].name)
-            plt.savefig("axis-%d.pdf" % m)
+        #iris = Table("wine")
+        #for m in range(lac.means.shape[1]):
+        #    plt.clf()
+        #    for p, mean, variance, c in zip(lac.priors, lac.means[:, m], lac.covars[:, m], "grb"):
+        #        sigma = math.sqrt(variance)
+        #        x = np.linspace(0,1,100)
+        #         plt.plot(x,p * mlab.normpdf(x, mean,sigma), color=c)
+        #     plt.plot(ds.X[:, m].ravel() + np.random.random(len(ds)) * 0.02, [0.05]*len(ds.X) + iris.Y.ravel() * 0.1,
+        #              "k|")
+        #     plt.ylabel("pdf")
+        #     plt.xlabel(iris.domain[m].name)
+        #     plt.savefig("axis-%d.pdf" % m)
 
     if print_latex:
         print(r"\end{tabular}")
@@ -511,7 +513,7 @@ if __name__ == '__main__':
                       help="normalize features (none, 01, stdev)")
     parser.add_option("-s", action="append", dest="score",
                       help="scoring function (covariance, probability, global_probability, best_triplet, "
-                           "best_triplet_probability, silhouette)")
+                           "best_triplet_probability, silhouette, silhouette_d)")
     parser.add_option("-k", dest="k", type="int", default=10,
                       help="number of clusters")
     parser.add_option("-e", dest="e", type="float", default=1e-15,
@@ -532,7 +534,7 @@ if __name__ == '__main__':
 
 
     for normalization in options.normalization or ["01"]:
-        for reorder in options.reorder or ["none"]:
-            for score in options.score or ["covariance"]:
+        for reorder in options.reorder or ["covariance"]:
+            for score in options.score or ["silhouette_d"]:
                 test(datasets, print_latex=False,
                      reorder=reorder, normalization=normalization, score=score, k=options.k, eps=options.e)

@@ -149,11 +149,11 @@ def lac(X, conts, k, nsteps=30, window_size=1):
     return w, means, covars, priors
 
 
-def create_contingencies(X, callback=None):
+def create_contingencies(X, n=10, callback=None):
     window_size = 1
     dim = len(X.domain)
 
-    X_ = Discretize(X, method=EqualFreq(n=10))
+    X_ = Discretize(X, method=EqualFreq(n=n))
     m = []
     for i, var in enumerate(X_.domain):
         cleaned_values = [tuple(map(str.strip, v.strip('[]()<>=≥').split('-')))
