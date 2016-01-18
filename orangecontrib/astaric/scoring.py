@@ -329,17 +329,18 @@ def reorder_attributes_covariance(ds, k=0):
     return ds[:, order]
 
 
-def reorder_attributes_probability_score(x, k):
-    m = x.shape[1]
-    gmm = GMM(x, k)
+def reorder_attributes_probability_score(ds, k):
+    m = ds.X.shape[1]
+    gmm = GMM(ds.X, k)
     probability = np.zeros((m, m))
     for i in range(m):
         for j in range(m):
             if i >= j:
                 continue
             probability[i, j] = probability[j, i] = \
-                score_dimension_pair(x, gmm, (i, j))
-    return x[:, reorder_features_by_similarity(probability)]
+                score_dimension_pair(ds.X, gmm, (i, j))
+    order = tuple(reorder_features_by_similarity(probability))
+    return ds[:, order]
 
 
 
@@ -376,11 +377,9 @@ def test(datasets=(),
         elif reorder == 'shuffle':
             np.random.shuffle(x.T)
         elif reorder == 'covariance':
-            print(ds.domain)
             ds = reorder_attributes_covariance(ds)
-            print(ds.domain)
         elif reorder == 'probability':
-            x = reorder_attributes_probability_score(x, k)
+            ds = reorder_attributes_probability_score(ds, k)
         else:
             raise AttributeError('Unknown feature reordering type "%s"' % (reorder,))
 
