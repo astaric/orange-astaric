@@ -363,7 +363,7 @@ def test(datasets=(),
         ds.name = ds2.name
         n_steps = 99
 
-        if normalization == 'none':
+        if normalization == 'none' or normalization is None:
             pass
         elif normalization == '01':
             ds = Normalize(norm_type=Normalize.NormalizeBySpan)(ds)
@@ -372,7 +372,7 @@ def test(datasets=(),
         else:
             raise AttributeError('Unknonwn normalization type "%s"' % (normalization,))
 
-        if reorder == 'none':
+        if reorder == 'none' or reorder is None:
             pass
         elif reorder == 'shuffle':
             np.random.shuffle(x.T)
@@ -427,9 +427,24 @@ def test(datasets=(),
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print("%s,%s,%s,%s,%f,%f,%f,%i,%f,%f" % (normalization, reorder, score, ds.name, km_score, gmm_score,
-                                                  lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
-                                                  len(ds.X)))
+            print("dataset: ", ds.name)
+            print("normalization: ", normalization)
+            print("reorder: ", reorder)
+            print("scoring function: ", score)
+            print("----------------")
+            print("k-means: %.5f" % km_score)
+            print("gmm:     %.5f" % gmm_score)
+            print("lac:     %.5f" % lac_score)
+            print("----------------")
+            print("k=%s, dropout %s (%.1f%%)" % (realk, sum(~lac_score.defined), (sum(~lac_score.defined) / len(
+                ds.X)) *
+                  100))
+            print()
+            print()
+
+            # print("%s,%s,%s,%s,%f,%f,%f,%i,%f,%f" % (normalization, reorder, score, ds.name, km_score, gmm_score,
+            #                                       lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
+            #                                       len(ds.X)))
 
         w1, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=False)
         w2, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=True)
@@ -442,7 +457,7 @@ def test(datasets=(),
 
         tbl = Table.concatenate((ds, probs, labels))
         tbl.save(ds2.name + ".lac.tab")
-        print(tbl.name + ".lac.tab")
+        print(ds2.name + ".lac.tab")
 
 
 
@@ -509,11 +524,11 @@ if __name__ == '__main__':
     from optparse import OptionParser
     parser = OptionParser()
     parser.add_option("-d", action="append", dest="datasets", )
-    parser.add_option("-r", action="append", dest="reorder",
+    parser.add_option("-r", dest="reorder", default="none",
                       help="reorder features (none, shuffle, covariance, probability)")
-    parser.add_option("-n", action="append", dest="normalization",
+    parser.add_option("-n", dest="normalization", default="01",
                       help="normalize features (none, 01, stdev)")
-    parser.add_option("-s", action="append", dest="score",
+    parser.add_option("-s", dest="score", default="silhouette_d",
                       help="scoring function (covariance, probability, global_probability, best_triplet, "
                            "best_triplet_probability, silhouette, silhouette_d)")
     parser.add_option("-k", dest="k", type="int", default=10,
@@ -521,8 +536,6 @@ if __name__ == '__main__':
     parser.add_option("-e", dest="e", type="float", default=1e-15,
                       help="dropout eps")
     (options, args) = parser.parse_args()
-
-    print('normalization,reorder,score,ds.name,km_score,gmm_score,lac_score,lac.k,dropout,dropout%')
 
     if options.datasets:
         def datasets():
@@ -535,8 +548,5 @@ if __name__ == '__main__':
         datasets = chain(continuous_uci_datasets())
 
 
-    for normalization in options.normalization or ["01"]:
-        for reorder in options.reorder or ["none"]:
-            for score in options.score or ["silhouette_d"]:
-                test(datasets, print_latex=False,
-                     reorder=reorder, normalization=normalization, score=score, k=options.k, eps=options.e)
+    test(datasets, print_latex=False,
+         reorder=options.reorder, normalization=options.normalization, score=options.score, k=options.k, eps=options.e)
