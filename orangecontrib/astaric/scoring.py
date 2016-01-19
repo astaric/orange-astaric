@@ -17,8 +17,6 @@ from sklearn.cluster import _k_means
 from Orange.preprocess import Normalize
 from orangecontrib.astaric.lac import lac, create_contingencies, MIN_COVARIANCE
 
-np.random.seed(42)
-
 
 def iris():
     yield Table("iris")
@@ -358,6 +356,7 @@ def test(datasets=(),
     #for ds in [Table('vehicle', name='vehicle')]:
     #for ds in GDS_datasets():
     for ds2 in datasets:
+        np.random.seed(42)
     #for ds in temporal_datasets():
         ds = impute(ds2)
         ds.name = ds2.name
