@@ -2,6 +2,7 @@ from collections import namedtuple
 from math import sqrt
 from itertools import chain
 
+import datetime
 import os
 import random
 import numpy as np
@@ -181,7 +182,7 @@ def parallel_coordinates_plot(filename, X, means=None, stdevs=None, annotate=lam
     ax.set_xlim([-.01, X.shape[1] - 0.93])
     annotate(ax)
     ax.axis('off')
-    plt.savefig(filename, bbox_inches='tight')
+    plt.savefig(os.path.join('output', filename), bbox_inches='tight')
     plt.close()
 
 
@@ -450,13 +451,11 @@ def test(datasets=(),
         w2 = np.argmax(w2, axis=1)[:, None]
 
         domain = Domain([ContinuousVariable("p%d" % i) for i in range(w1.shape[1])])
-        print(domain, w1.shape)
         probs = Table(domain, w1)
         labels = Table(Domain([DiscreteVariable("label", values=list(range(k)))]), w2)
 
         tbl = Table.concatenate((ds, probs, labels))
-        tbl.save(ds2.name + ".lac.tab")
-        print(ds2.name + ".lac.tab")
+        tbl.save(os.path.join('output', ds2.name + ".lac.tab"))
 
 
 
@@ -546,6 +545,10 @@ if __name__ == '__main__':
     else:
         datasets = chain(continuous_uci_datasets())
 
+    if os.path.exists('output'):
+        timestamp = datetime.datetime.fromtimestamp(os.path.getctime('output'))
+        os.rename('output', 'output - %s' % timestamp)
+    os.mkdir('output')
 
     test(datasets, print_latex=False,
          reorder=options.reorder, normalization=options.normalization, score=options.score, k=options.k, eps=options.e)
