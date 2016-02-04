@@ -429,7 +429,7 @@ def test(datasets=(),
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
-            print("dataset: ", ds.name)
+            print("dataset: %s (%s rows, %s features)" % (ds.name, len(ds), len(ds.domain)))
             print("normalization: ", normalization)
             print("reorder: ", reorder)
             print("scoring function: ", score)
