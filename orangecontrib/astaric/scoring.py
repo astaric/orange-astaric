@@ -5,6 +5,8 @@ from itertools import chain
 import datetime
 import os
 import random
+import subprocess
+import sys
 import numpy as np
 import scipy.stats as stats
 import sklearn
@@ -550,6 +552,11 @@ if __name__ == '__main__':
         timestamp = datetime.datetime.fromtimestamp(os.path.getctime('output'))
         os.rename('output', 'output - %s' % timestamp)
     os.mkdir('output')
+
+    # Log std output to file
+    tee = subprocess.Popen(["tee", "output/output.txt"], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
 
     test(datasets, print_latex=False,
          reorder=options.reorder, normalization=options.normalization, score=options.score, k=options.k, eps=options.e)
