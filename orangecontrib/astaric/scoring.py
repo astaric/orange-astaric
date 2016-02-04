@@ -454,6 +454,8 @@ def test(datasets=(),
         probs = Table(domain, w1)
         labels = Table(Domain([DiscreteVariable("label", values=list(range(k)))]), w2)
 
+        ds2.name = ds2.name.replace("/", "_")
+        ds.name = ds2.name.replace("/", "_")
         tbl = Table.concatenate((ds, probs, labels))
         tbl.save(os.path.join('output', ds2.name + ".lac.tab"))
 
@@ -521,7 +523,6 @@ def rank_plot():
 if __name__ == '__main__':
     from optparse import OptionParser
     parser = OptionParser()
-    parser.add_option("-d", action="append", dest="datasets", )
     parser.add_option("-r", dest="reorder", default="none",
                       help="reorder features (none, shuffle, covariance, probability)")
     parser.add_option("-n", dest="normalization", default="01",
@@ -535,9 +536,9 @@ if __name__ == '__main__':
                       help="dropout eps")
     (options, args) = parser.parse_args()
 
-    if options.datasets:
+    if args:
         def datasets():
-            for d in options.datasets:
+              for d in args:
                 table = open_ds(d, filter=False)
                 table.name = d
                 yield table
