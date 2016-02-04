@@ -114,6 +114,13 @@ def GMM(X, k):
     return Result(gmm.weights_, gmm.means_, gmm.covars_, k, [])
 
 
+def LouAUC(ds):
+    from Orange.evaluation import LeaveOneOut, AUC
+    from Orange.classification import KNNLearner
+    results = LeaveOneOut(ds, [KNNLearner()])
+    return AUC(results)
+
+
 def get_cluster_weights(priors, means, covars, x, crisp=True, eps=1e-15):
     k, m = means.shape
     w = np.zeros((len(x), k))
@@ -279,8 +286,10 @@ def silhouette_score(results, x):
     labels = w.argmax(axis=1)
     return sklearn.metrics.silhouette_score(x, labels)
 
-def silhouette_d_score(results, x):
+def silhouette_d_score(results, x, defined_=None):
     w, defined = get_cluster_weights(results.priors, results.means, results.covars, x)
+    if defined_ is not None:
+        defined = defined_
     labels = w.argmax(axis=1)
     x = x[defined, :]
     labels = labels[defined]
@@ -426,7 +435,15 @@ def test(datasets=(),
             print("Error")
             continue
 
-        km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
+        lac_score = scorer(lac, ds.X)
+        opts = dict(defined_=lac_score.defined) if hasattr(lac_score, 'defined') else {}
+        km_score = scorer(km, ds.X)
+        km_score_d = scorer(km, ds.X, **opts)
+        gmm_score = scorer(gmm, ds.X)
+        gmm_score_d = scorer(gmm, ds.X, **opts)
+
+        knn_score = LouAUC(ds)
+
         results.append((km_score, gmm_score, lac_score))
         if not print_latex:
             print("dataset: %s (%s rows, %s features)" % (ds.name, len(ds), len(ds.domain)))
@@ -434,9 +451,13 @@ def test(datasets=(),
             print("reorder: ", reorder)
             print("scoring function: ", score)
             print("----------------")
-            print("k-means: %.5f" % km_score)
-            print("gmm:     %.5f" % gmm_score)
-            print("lac:     %.5f" % lac_score)
+            print("k-means:           %.5f" % km_score)
+            print("gmm:               %.5f" % gmm_score)
+            print("k-means (dropout): %.5f" % km_score_d)
+            print("gmm (dropout):     %.5f" % gmm_score_d)
+            print("lac:               %.5f" % lac_score)
+            print("----------------")
+            print("knn AUC (lou)      %.5f" % knn_score)
             print("----------------")
             print("k=%s, dropout %s (%.1f%%)" % (realk, sum(~lac_score.defined), (sum(~lac_score.defined) / len(
                 ds.X)) *
