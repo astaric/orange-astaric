@@ -49,10 +49,10 @@ def continuous_uci_datasets():
 
 def open_ds(ds, filter=True):
     table = Table(ds)
-    continuous_features = [a for a in table.domain.attributes if isinstance(a, ContinuousVariable)]
+    continuous_features = [a for a in table.domain.attributes if a.is_continuous]
     if not filter or len(continuous_features) > 5:
         print(ds)
-        new_table = Table(Domain(continuous_features), table)
+        new_table = Table(Domain(continuous_features, [table.domain.class_var]), table)
         impute(new_table)
         new_table.name = ds
         return new_table

@@ -155,7 +155,7 @@ def create_contingencies(X, n=10, callback=None):
 
     X_ = Discretize(X, method=EqualFreq(n=n))
     m = []
-    for i, var in enumerate(X_.domain):
+    for i, var in enumerate(X_.domain.attributes):
         cleaned_values = [tuple(map(str.strip, v.strip('[]()<>=≥').split('-')))
                           for v in var.values]
         try:
@@ -189,12 +189,12 @@ def create_contingencies(X, n=10, callback=None):
                 if callback:
                     callback(al, al)
     else:
-        conts = [defaultdict(float) for i in range(len(X_.domain))]
+        conts = [defaultdict(float) for i in range(len(X_.domain.attributes))]
         for i, r in enumerate(X_):
             if any(np.isnan(r)):
                 continue
-            row = tuple(m[vi].get(v) for vi, v in enumerate(r))
-            for l in range(len(X_.domain)):
+            row = tuple(m[vi].get(v) for vi, v in enumerate(r.x))
+            for l in range(len(X_.domain.attributes)):
                 lower = l - window_size if l - window_size >= 0 else None
                 upper = l + window_size + 1 if l + window_size + 1 <= dim else None
                 dims = slice(lower, upper)
