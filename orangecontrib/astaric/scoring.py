@@ -423,8 +423,8 @@ def test(datasets=(),
             km = KM(ds.X, realk)
             gmm = GMM(ds.X, realk)
         except:
-            print(ds.X.min(), ds.X.max())
-            raise
+            print("Error")
+            continue
 
         km_score, gmm_score, lac_score = map(lambda r: scorer(r, ds.X), [km, gmm, lac])
         results.append((km_score, gmm_score, lac_score))
