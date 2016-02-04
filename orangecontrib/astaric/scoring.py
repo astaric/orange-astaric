@@ -523,30 +523,28 @@ def rank_plot():
 
 
 if __name__ == '__main__':
-    from optparse import OptionParser
-    parser = OptionParser()
-    parser.add_option("-r", dest="reorder", default="none",
-                      help="reorder features (none, shuffle, covariance, probability)")
-    parser.add_option("-n", dest="normalization", default="01",
-                      help="normalize features (none, 01, stdev)")
-    parser.add_option("-s", dest="score", default="silhouette_d",
-                      help="scoring function (covariance, probability, global_probability, best_triplet, "
-                           "best_triplet_probability, silhouette, silhouette_d)")
-    parser.add_option("-k", dest="k", type="int", default=10,
-                      help="number of clusters")
-    parser.add_option("-e", dest="e", type="float", default=1e-15,
-                      help="dropout eps")
-    (options, args) = parser.parse_args()
+    from argparse import ArgumentParser
+    parser = ArgumentParser("Evaluate LAC")
+    parser.add_argument("datasets", metavar="dataset", nargs="+", help="dataset to run the tests on")
+    parser.add_argument("-r", dest="reorder", default="none",
+                        help="reorder features (none, shuffle, covariance, probability)")
+    parser.add_argument("-n", dest="normalization", default="01",
+                        help="normalize features (none, 01, stdev)")
+    parser.add_argument("-s", dest="score", default="silhouette_d",
+                        help="scoring function (covariance, probability, global_probability, best_triplet, "
+                             "best_triplet_probability, silhouette, silhouette_d)")
+    parser.add_argument("-k", dest="k", type=int, default=10,
+                        help="number of clusters")
+    parser.add_argument("-e", dest="e", type=float, default=1e-15,
+                        help="dropout eps")
+    args = parser.parse_args()
 
-    if args:
-        def datasets():
-              for d in args:
-                table = open_ds(d, filter=False)
-                table.name = d
-                yield table
-        datasets = datasets()
-    else:
-        datasets = chain(continuous_uci_datasets())
+    def datasets_generator():
+          for d in args.datasets:
+            table = open_ds(d, filter=False)
+            table.name = d
+            yield table
+    datasets = datasets_generator()
 
     if os.path.exists('output'):
         timestamp = datetime.datetime.fromtimestamp(os.path.getctime('output'))
@@ -559,4 +557,4 @@ if __name__ == '__main__':
     os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
 
     test(datasets, print_latex=False,
-         reorder=options.reorder, normalization=options.normalization, score=options.score, k=options.k, eps=options.e)
+         reorder=args.reorder, normalization=args.normalization, score=args.score, k=args.k, eps=args.e)
