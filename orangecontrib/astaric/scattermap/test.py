@@ -1,6 +1,8 @@
 import os
 import pickle
 import random
+
+import itertools
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -42,23 +44,10 @@ def generate_random_dataset(k=10, n_of_classes=2):
     return field
 
 
-def generate_two_regions(k=10, n_of_classes=2):
-    random.seed(42)
-    field = np.zeros((n_of_bins ** 2, n_of_bins ** 2, n_of_classes))
 
-    for c in range(n_of_classes):
-        mx = n_of_bins**2
-        mu=np.array([random.randint(int(mx/3), int(2/3*mx)),
-                     random.randint(int(mx/3), int(2/3*mx))])
-
-        data = np.random.multivariate_normal(mu, np.diag(np.array([150, 150])), size=k)
-        for y, x in data:
-            field[int(y), int(x), c] += 1
-
-    return field
-
-def generate_k_regions(k=10, n=40):
-    random.seed(42)
+def generate_k_regions(k=10, n=40, covariance=150, w=1, seed=4):
+    np.random.seed(seed)
+    random.seed(seed)
 
     field = np.zeros((n_of_bins ** 2, n_of_bins ** 2, k))
 
@@ -67,7 +56,7 @@ def generate_k_regions(k=10, n=40):
         mu=np.array([random.randint(int(mx/4), int(3/4*mx)),
                      random.randint(int(mx/4), int(3/4*mx))])
 
-        data = np.random.multivariate_normal(mu, np.diag(np.array([150, 150])), size=n)
+        data = np.random.multivariate_normal(mu, np.diag(np.array([covariance, covariance])), size=n)
         for y, x in data:
             field[int(y), int(x), c] += 1
 
@@ -110,14 +99,15 @@ def materialize(field, sharpened=()):
                         examples.extend(create_examples(x1*n_of_bins + x2 +.5, y1*n_of_bins + y2 +.5, counts))
 
     return Table(Domain([ContinuousVariable("x"), ContinuousVariable("y")],
-                        [DiscreteVariable("class", values=["1", "2"])]),
+                        [DiscreteVariable("class", values=[str(x+1) for x in range(field.shape[2])])]),
                  np.array(examples))
 
 
-fig1 = plt.figure()
 def plot_field(field, a, b, c):
     h, w, _ = field.shape
     ax1 = fig1.add_subplot(a,b,c, aspect='equal')
+    ax1.set_xticklabels([])
+    ax1.set_yticklabels([])
 
     for i in range(h):
         for j in range(w):
@@ -126,7 +116,7 @@ def plot_field(field, a, b, c):
             if not counts.any():
                 continue
             else:
-                color = 'brggitcmyk'[counts.argmax()]
+                color = 'brgcmyk'[counts.argmax()]
 
             ax1.add_patch(
                 patches.Rectangle(
@@ -179,12 +169,16 @@ def compute_chi_squares(observes):
 
 
 def random_selection(field):
+    random.seed(42)
     fields = [(i, j) for i in range(n_of_bins) for j in range(n_of_bins)]
     random.shuffle(fields)
     return fields
 
-def linear_selection(field):
-    return [(i, j) for i in range(n_of_bins) for j in range(n_of_bins)]
+def column_selection(field):
+    return [(i, j) for j in range(n_of_bins) for i in range(n_of_bins-1, -1, -1) ]
+
+def row_selection(field):
+    return [(i, j) for i in range(n_of_bins-1, -1, -1) for j in range(n_of_bins)]
 
 def my_selection(field):
     def get_dist():
@@ -204,39 +198,58 @@ def my_selection(field):
     return fields
 
 
-field = generate_random_dataset(10, n_of_classes=2)
 #field = generate_random_dataset(10, n_of_classes=2)
-#field = generate_random_dataset(10, n_of_classes=2)
+#field = generate_k_regions(k=2, n=50, covariance=600, w=3, seed=7)
+field = generate_k_regions(k=5, n=50, covariance=160, w=2)
+selection = my_selection(field)
 
+#for i in range(100):
+#     print(i)
+#     field = generate_k_regions(k=2, n=50, covariance=600, w=2, seed=i)
+#     fig1 = plt.figure()
+#     plot_field(field, 1, 1, 1)
+#     #plt.title("t = %d" % i)
+#     fig1.savefig('s_%d.pdf' % i, bbox_inches='tight')
+
+
+
+for i in itertools.chain(range(0, 101, 10)):
+#for i in [256]:
+    print(i)
+    fig1 = plt.figure()
+    plot_field(unsharpen(field, selection[:i]), 1, 1, 1)
+    plt.title("t=%d" % i)
+    fig1.savefig('f_%d.pdf' % i, bbox_inches='tight')
 
 if os.path.exists('results.pck'):
     with open('results.pck', 'rb') as f:
         r = pickle.load(f)
-        l = pickle.load(f)
+        lc = pickle.load(f)
+        lr = pickle.load(f)
         m = pickle.load(f)
 else:
     print('random')
     r = evaluate(field, random_selection)
-    print('linear')
-    l = evaluate(field, linear_selection)
+    print('columns')
+    lc = evaluate(field, column_selection)
+    print('rows')
+    lr = evaluate(field, row_selection)
     print('scattermap')
     m = evaluate(field, my_selection)
 
     with open('results.pck', 'wb') as f:
         pickle.dump(r, f)
-        pickle.dump(l, f)
+        pickle.dump(lc, f)
+        pickle.dump(lr, f)
         pickle.dump(m, f)
 
 
-plot_field(unsharpen(field), 2, 2, 1)
-plot_field(field, 2, 2, 2)
-fig1.savefig('sm.pdf', bbox_inches='tight')
-
 
 fig1 = plt.figure()
-plt.plot(r, label='random')
-plt.plot(l, label='linear')
-plt.plot(m, label='scattermap')
+plt.plot(r, label='naključno')
+plt.plot(lc, label='po stolpcih')
+plt.plot(lr, label='po vrsticah')
+plt.plot(m, label='razsevna karta')
 plt.legend(loc='lower right')
 plt.ylabel('CA')
 plt.xlabel('iterations')

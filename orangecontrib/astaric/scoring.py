@@ -4,6 +4,7 @@ from itertools import chain
 
 import datetime
 import os
+import pickle
 import random
 import subprocess
 import sys
@@ -48,6 +49,7 @@ def continuous_uci_datasets():
             yield table
 
 def open_ds(ds, filter=True):
+    DiscreteVariable._clear_all_caches()
     table = Table(ds)
     continuous_features = [a for a in table.domain.attributes if a.is_continuous]
     if not filter or len(continuous_features) > 5:
@@ -118,7 +120,7 @@ def LouAUC(ds):
     from Orange.evaluation import LeaveOneOut, AUC
     from Orange.classification import KNNLearner
     results = LeaveOneOut(ds, [KNNLearner()])
-    return AUC(results)
+    return AUC()(results)
 
 
 def get_cluster_weights(priors, means, covars, x, crisp=True, eps=1e-15):
@@ -356,7 +358,7 @@ def reorder_attributes_probability_score(ds, k):
 
 def test(datasets=(),
          normalization="stdev", reorder='none', score='probability',
-         print_latex=True, k=10, eps=1e-15):
+         print_latex=True, fix_k=10, eps=1e-15):
     global results
     #print("%% normalization=%s,reorder=%s,score=%s, %%" % (normalization, reorder, score))
 
@@ -367,158 +369,185 @@ def test(datasets=(),
     results = []
     #for ds in [Table('vehicle', name='vehicle')]:
     #for ds in GDS_datasets():
-    for ds2 in datasets:
-        np.random.seed(42)
-    #for ds in temporal_datasets():
-        ds = impute(ds2)
-        ds.name = ds2.name
-        n_steps = 99
 
-        if normalization == 'none' or normalization is None:
-            pass
-        elif normalization == '01':
-            ds = Normalize(norm_type=Normalize.NormalizeBySpan)(ds)
-        elif normalization == 'stdev':
-            ds = Normalize(norm_type=Normalize.NormalizeBySD)(ds)
-        else:
-            raise AttributeError('Unknonwn normalization type "%s"' % (normalization,))
+    with open("output/results.csv", "w") as f:
+        f.write("GDS,LAC,KM,GMM,KM (dropout),GMM (dropout),knn (AUC),dropout (#),dropout (%),realk")
 
-        if reorder == 'none' or reorder is None:
-            pass
-        elif reorder == 'shuffle':
-            np.random.shuffle(x.T)
-        elif reorder == 'covariance':
-            ds = reorder_attributes_covariance(ds)
-        elif reorder == 'probability':
-            ds = reorder_attributes_probability_score(ds, k)
-        else:
-            raise AttributeError('Unknown feature reordering type "%s"' % (reorder,))
+        for ds2 in datasets:
+            if fix_k:
+                k = fix_k
+            elif isinstance(ds2.domain.class_var, DiscreteVariable):
+                k = len(ds2.domain.class_var.values)
+            else:
+                # start with 10, lac will figure it out
+                k = 10
 
-        if score == 'covariance':
-            scorer = covariance_score
-        elif score == 'probability':
-            scorer = probability_score
-        elif score == 'global_probability':
-            scorer = global_probability_score
-        elif score == 'best_triplet':
-            scorer = best_triplet_variance_score
-        elif score == 'best_triplet_probability':
-            scorer = best_triplet_probability_score
-        elif score == 'silhouette':
-            scorer = silhouette_score
-        elif score == 'silhouette_d':
-            scorer = silhouette_d_score
-        else:
-            raise AttributeError('Unknown scorer type "%s"' % (score,))
+            np.random.seed(42)
+        #for ds in temporal_datasets():
+            ds = impute(ds2)
+            ds2.name = ds2.name.replace("/", "_")
+            ds.name = ds.name.replace("/", "_")
+            ds.name = ds2.name
+            n_steps = 99
 
+            if normalization == 'none' or normalization is None:
+                pass
+            elif normalization == '01':
+                ds = Normalize(norm_type=Normalize.NormalizeBySpan)(ds)
+            elif normalization == 'stdev':
+                ds = Normalize(norm_type=Normalize.NormalizeBySD)(ds)
+            else:
+                raise AttributeError('Unknonwn normalization type "%s"' % (normalization,))
 
-        all_lac_scores = []
-        for n in range(10,11):
-            #print('.', end='')
-            lac = LAC(ds, k)
-            all_lac_scores.append((lac.k, scorer(lac, ds.X)))
+            if reorder == 'none' or reorder is None:
+                pass
+            elif reorder == 'shuffle':
+                np.random.shuffle(x.T)
+            elif reorder == 'covariance':
+                ds = reorder_attributes_covariance(ds)
+            elif reorder == 'probability':
+                ds = reorder_attributes_probability_score(ds, k)
+            else:
+                raise AttributeError('Unknown feature reordering type "%s"' % (reorder,))
 
-#        print()
-#        for i in range(10, 11):
-#            lac_scores = [s for k, s in all_lac_scores if k == i]
-#            print("lac, %i, %f, %f, %f, %f" % (i, min(lac_scores or [0]), min([l for l in lac_scores if l] or [0]), max(lac_scores or [0]), sum([l for l in lac_scores if l] or [0]) / len([l for l in lac_scores if l] or [0])))
-
-        realk = max(k for k, s in all_lac_scores)
-        #if lac.k < 2:
-        #    continue
-
-        try:
-            lac = LAC(ds, realk)
-            km = KM(ds.X, realk)
-            gmm = GMM(ds.X, realk)
-        except:
-            print("Error")
-            continue
-
-        lac_score = scorer(lac, ds.X)
-        opts = dict(defined_=lac_score.defined) if hasattr(lac_score, 'defined') else {}
-        km_score = scorer(km, ds.X)
-        km_score_d = scorer(km, ds.X, **opts)
-        gmm_score = scorer(gmm, ds.X)
-        gmm_score_d = scorer(gmm, ds.X, **opts)
-
-        knn_score = LouAUC(ds)
-
-        results.append((km_score, gmm_score, lac_score))
-        if not print_latex:
-            print("dataset: %s (%s rows, %s features)" % (ds.name, len(ds), len(ds.domain)))
-            print("normalization: ", normalization)
-            print("reorder: ", reorder)
-            print("scoring function: ", score)
-            print("----------------")
-            print("k-means:           %.5f" % km_score)
-            print("gmm:               %.5f" % gmm_score)
-            print("k-means (dropout): %.5f" % km_score_d)
-            print("gmm (dropout):     %.5f" % gmm_score_d)
-            print("lac:               %.5f" % lac_score)
-            print("----------------")
-            print("knn AUC (lou)      %.5f" % knn_score)
-            print("----------------")
-            print("k=%s, dropout %s (%.1f%%)" % (realk, sum(~lac_score.defined), (sum(~lac_score.defined) / len(
-                ds.X)) *
-                  100))
-            print()
-            print()
-
-            # print("%s,%s,%s,%s,%f,%f,%f,%i,%f,%f" % (normalization, reorder, score, ds.name, km_score, gmm_score,
-            #                                       lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
-            #                                       len(ds.X)))
-
-        w1, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=False)
-        w2, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=True)
-        w2 = np.argmax(w2, axis=1)[:, None]
-
-        domain = Domain([ContinuousVariable("p%d" % i) for i in range(w1.shape[1])])
-        probs = Table(domain, w1)
-        labels = Table(Domain([DiscreteVariable("label", values=list(range(k)))]), w2)
-
-        ds2.name = ds2.name.replace("/", "_")
-        ds.name = ds2.name.replace("/", "_")
-        tbl = Table.concatenate((ds, probs, labels))
-        tbl.save(os.path.join('output', ds2.name + ".lac.tab"))
+            if score == 'covariance':
+                scorer = covariance_score
+            elif score == 'probability':
+                scorer = probability_score
+            elif score == 'global_probability':
+                scorer = global_probability_score
+            elif score == 'best_triplet':
+                scorer = best_triplet_variance_score
+            elif score == 'best_triplet_probability':
+                scorer = best_triplet_probability_score
+            elif score == 'silhouette':
+                scorer = silhouette_score
+            elif score == 'silhouette_d':
+                scorer = silhouette_d_score
+            else:
+                raise AttributeError('Unknown scorer type "%s"' % (score,))
 
 
+            all_lac_scores = []
+            for n in range(10,11):
+                #print('.', end='')
+                lac = LAC(ds, k)
+                all_lac_scores.append((lac.k, scorer(lac, ds.X)))
+
+    #        print()
+    #        for i in range(10, 11):
+    #            lac_scores = [s for k, s in all_lac_scores if k == i]
+    #            print("lac, %i, %f, %f, %f, %f" % (i, min(lac_scores or [0]), min([l for l in lac_scores if l] or [0]), max(lac_scores or [0]), sum([l for l in lac_scores if l] or [0]) / len([l for l in lac_scores if l] or [0])))
+
+            realk = max(k for k, s in all_lac_scores)
+            #if lac.k < 2:
+            #    continue
+
+            try:
+                lac = LAC(ds, realk)
+                km = KM(ds.X, realk)
+                gmm = GMM(ds.X, realk)
+            except:
+                print("Error")
+                continue
+
+            lac_score = scorer(lac, ds.X)
+            opts = dict(defined_=lac_score.defined) if hasattr(lac_score, 'defined') else {}
+
+            dropout_count = sum(~lac_score.defined)
+            dropout_percentage = (dropout_count / len(ds.X) * 100)
 
 
-        def annotate(minis):
-            def _annotate(ax):
-                for m in minis:
-                    ax.plot([m-1, m, m+1], [.5, .5, .5])
-            return _annotate
+            if not print_latex:
+                print("dataset: %s (%s rows, %s features)" % (ds.name, len(ds), len(ds.domain)))
+                print("normalization: ", normalization)
+                print("reorder: ", reorder)
+                print("scoring function: ", score)
+                print("----------------")
+                km_score = scorer(km, ds.X)
+                print("k-means:           %.5f" % km_score)
+                gmm_score = scorer(gmm, ds.X)
+                print("gmm:               %.5f" % gmm_score)
+                km_score_d = scorer(km, ds.X, **opts)
+                print("k-means (dropout): %.5f" % km_score_d)
+                gmm_score_d = scorer(gmm, ds.X, **opts)
+                print("gmm (dropout):     %.5f" % gmm_score_d)
+                print("lac:               %.5f" % lac_score)
+                print("----------------")
+                try:
+                    knn_score = LouAUC(ds)
+                except Exception:
+                    with open(os.path.join('output', ds.name + ".error.pkl"), 'wb') as pck:
+                        pickle.dump(ds, pck, pickle.HIGHEST_PROTOCOL)
+                    knn_score = float("nan")
+                print("knn AUC (lou)      %.5f" % knn_score)
+                print("----------------")
+                print("k=%s, dropout %s (%.1f%%)" % (realk, dropout_count, dropout_percentage))
+                print()
+                print()
 
-        parallel_coordinates_plot(ds.name + ".kmeans.pdf", ds.X,
-                                  means=km.means, stdevs=np.sqrt(km.covars), annotate=annotate(km.minis))
-        parallel_coordinates_plot(ds.name + ".lac.pdf", ds.X,
-                                  means=lac.means, stdevs=np.sqrt(lac.covars), annotate=annotate(lac.minis))
-        parallel_coordinates_plot(ds.name + ".gmm.pdf", ds.X,
-                                  means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
+                f.write("%s," "%.5f,"    "%.5f,"   "%.5f,"    "%.5f,"     "%.5f," %
+                        (ds.name, lac_score, km_score, gmm_score, km_score_d, gmm_score_d))
+                f.write("%.5f,"    "%d,"          "%.5f,"             "%.5f\n" %
+                        (knn_score, dropout_count, dropout_percentage, realk))
 
-        import matplotlib.pyplot as plt
-        import matplotlib.mlab as mlab
-        import math
+                if np.isnan(knn_score):
+                    continue
 
-        #iris = Table("wine")
-        #for m in range(lac.means.shape[1]):
-        #    plt.clf()
-        #    for p, mean, variance, c in zip(lac.priors, lac.means[:, m], lac.covars[:, m], "grb"):
-        #        sigma = math.sqrt(variance)
-        #        x = np.linspace(0,1,100)
-        #         plt.plot(x,p * mlab.normpdf(x, mean,sigma), color=c)
-        #     plt.plot(ds.X[:, m].ravel() + np.random.random(len(ds)) * 0.02, [0.05]*len(ds.X) + iris.Y.ravel() * 0.1,
-        #              "k|")
-        #     plt.ylabel("pdf")
-        #     plt.xlabel(iris.domain[m].name)
-        #     plt.savefig("axis-%d.pdf" % m)
+                # print("%s,%s,%s,%s,%f,%f,%f,%i,%f,%f" % (normalization, reorder, score, ds.name, km_score, gmm_score,
+                #                                       lac_score, realk, sum(~lac_score.defined), sum(~lac_score.defined) /
+                #                                       len(ds.X)))
 
-    if print_latex:
-        print(r"\end{tabular}")
-    results = np.array(results)
-    #comparison_plot()
+            w1, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=False)
+            w2, _ = get_cluster_weights(lac.priors, lac.means, lac.covars, ds.X, crisp=True)
+            w2 = np.argmax(w2, axis=1)[:, None]
+
+            domain = Domain([ContinuousVariable("p%d" % i) for i in range(w1.shape[1])])
+            probs = Table(domain, w1)
+            labels = Table(Domain([DiscreteVariable("label", values=list(range(k)))]), w2)
+
+            ds2.name = ds2.name.replace("/", "_")
+            ds.name = ds.name.replace("/", "_")
+            tbl = Table.concatenate((ds, probs, labels))
+            tbl.save(os.path.join('output', ds2.name + ".lac.tab"))
+
+
+
+
+            def annotate(minis):
+                def _annotate(ax):
+                    for m in minis:
+                        ax.plot([m-1, m, m+1], [.5, .5, .5])
+                return _annotate
+
+            parallel_coordinates_plot(ds.name + ".kmeans.pdf", ds.X,
+                                      means=km.means, stdevs=np.sqrt(km.covars), annotate=annotate(km.minis))
+            parallel_coordinates_plot(ds.name + ".lac.pdf", ds.X,
+                                      means=lac.means, stdevs=np.sqrt(lac.covars), annotate=annotate(lac.minis))
+            parallel_coordinates_plot(ds.name + ".gmm.pdf", ds.X,
+                                      means=gmm.means, stdevs=np.sqrt(gmm.covars), annotate=annotate(gmm.minis))
+
+            import matplotlib.pyplot as plt
+            import matplotlib.mlab as mlab
+            import math
+
+            #iris = Table("wine")
+            #for m in range(lac.means.shape[1]):
+            #    plt.clf()
+            #    for p, mean, variance, c in zip(lac.priors, lac.means[:, m], lac.covars[:, m], "grb"):
+            #        sigma = math.sqrt(variance)
+            #        x = np.linspace(0,1,100)
+            #         plt.plot(x,p * mlab.normpdf(x, mean,sigma), color=c)
+            #     plt.plot(ds.X[:, m].ravel() + np.random.random(len(ds)) * 0.02, [0.05]*len(ds.X) + iris.Y.ravel() * 0.1,
+            #              "k|")
+            #     plt.ylabel("pdf")
+            #     plt.xlabel(iris.domain[m].name)
+            #     plt.savefig("axis-%d.pdf" % m)
+
+        if print_latex:
+            print(r"\end{tabular}")
+        results = np.array(results)
+        #comparison_plot()
 
 
 def comparison_plot():
@@ -554,7 +583,7 @@ if __name__ == '__main__':
     parser.add_argument("-s", dest="score", default="silhouette_d",
                         help="scoring function (covariance, probability, global_probability, best_triplet, "
                              "best_triplet_probability, silhouette, silhouette_d)")
-    parser.add_argument("-k", dest="k", type=int, default=10,
+    parser.add_argument("-k", dest="k", type=int, default=None,
                         help="number of clusters")
     parser.add_argument("-e", dest="e", type=float, default=1e-15,
                         help="dropout eps")
@@ -578,4 +607,4 @@ if __name__ == '__main__':
     os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
 
     test(datasets, print_latex=False,
-         reorder=args.reorder, normalization=args.normalization, score=args.score, k=args.k, eps=args.e)
+         reorder=args.reorder, normalization=args.normalization, score=args.score, fix_k=args.k, eps=args.e)
