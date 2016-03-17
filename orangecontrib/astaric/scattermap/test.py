@@ -42,22 +42,8 @@ def generate_random_dataset(k=10, n_of_classes=2):
     return field
 
 
-def generate_two_regions(k=10, n_of_classes=2):
-    random.seed(42)
-    field = np.zeros((n_of_bins ** 2, n_of_bins ** 2, n_of_classes))
 
-    for c in range(n_of_classes):
-        mx = n_of_bins**2
-        mu=np.array([random.randint(int(mx/3), int(2/3*mx)),
-                     random.randint(int(mx/3), int(2/3*mx))])
-
-        data = np.random.multivariate_normal(mu, np.diag(np.array([150, 150])), size=k)
-        for y, x in data:
-            field[int(y), int(x), c] += 1
-
-    return field
-
-def generate_k_regions(k=10, n=40):
+def generate_k_regions(k=10, n=40, covariance=150, w=1):
     random.seed(42)
 
     field = np.zeros((n_of_bins ** 2, n_of_bins ** 2, k))
@@ -67,7 +53,7 @@ def generate_k_regions(k=10, n=40):
         mu=np.array([random.randint(int(mx/4), int(3/4*mx)),
                      random.randint(int(mx/4), int(3/4*mx))])
 
-        data = np.random.multivariate_normal(mu, np.diag(np.array([150, 150])), size=n)
+        data = np.random.multivariate_normal(mu, np.diag(np.array([covariance, covariance])), size=n)
         for y, x in data:
             field[int(y), int(x), c] += 1
 
@@ -205,9 +191,13 @@ def my_selection(field):
 
 
 field = generate_random_dataset(10, n_of_classes=2)
-#field = generate_random_dataset(10, n_of_classes=2)
+#field = generate_k_regions(k=2, n=50, covariance=500, w=2)
 #field = generate_random_dataset(10, n_of_classes=2)
 
+
+plot_field(unsharpen(field), 2, 2, 1)
+plot_field(field, 2, 2, 2)
+fig1.savefig('sm.pdf', bbox_inches='tight')
 
 if os.path.exists('results.pck'):
     with open('results.pck', 'rb') as f:
@@ -227,10 +217,6 @@ else:
         pickle.dump(l, f)
         pickle.dump(m, f)
 
-
-plot_field(unsharpen(field), 2, 2, 1)
-plot_field(field, 2, 2, 2)
-fig1.savefig('sm.pdf', bbox_inches='tight')
 
 
 fig1 = plt.figure()
