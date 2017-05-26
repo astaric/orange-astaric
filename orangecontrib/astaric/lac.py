@@ -153,7 +153,7 @@ def create_contingencies(X, n=10, callback=None):
     window_size = 1
     dim = len(X.domain)
 
-    X_ = Discretize(X, method=EqualFreq(n=n))
+    X_ = Discretize(method=EqualFreq(n=n))(X)
     m = []
     for i, var in enumerate(X_.domain.attributes):
         cleaned_values = [tuple(map(str.strip, v.strip('[]()<>=≥').split('-')))

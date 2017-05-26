@@ -52,7 +52,7 @@ SETUP_REQUIRES = (
 )
 
 INSTALL_REQUIRES = (
-   'Orange',
+   'Orange3',
    'setuptools',
    'numpy',
 )
